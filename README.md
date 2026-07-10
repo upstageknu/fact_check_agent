@@ -3,7 +3,7 @@
 버그바운티 리포트의 claim을 **LLM(Grok)이 도구를 하나씩 호출**하며 실제 코드베이스와 대조해
 검증하는 Agent입니다. rule-base가 아니라 `사실판단_Agent_Gemini.ipynb`의 도구 호출 루프 패턴을
 따릅니다 — LLM이 어떤 함수/헤더/커밋/호출을 검증할지 스스로 판단해 도구를 호출하고, **도구는
-실제 코드베이스를 결정론적으로 조회**합니다. debate_agent와 동일한 Active Pull 구조입니다.
+실제 코드베이스를 결정론적으로 조회**합니다.
 
 ## 도구 (LLM이 function calling으로 호출)
 
@@ -92,12 +92,8 @@ fact_check/
 
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `LLM_API_KEY` | ✅ | — | Grok(xAI) API 키 |
-| `LLM_BASE_URL` |  | `https://api.x.ai/v1` | LLM 엔드포인트 |
-| `LLM_MODEL` |  | `grok-4` | 사용할 모델 |
-| `ORCHESTRATOR_BASE_URL` |  | `https://api.mingyo.kim` | 오케스트레이터 DB (`DATABASE_URL`로도 인식) |
-| `REPO_PATH` |  | `/repo` | 검증 대상 저장소 로컬 경로 |
-| `REPO_URL` |  | — | (선택) REPO_PATH가 비면 이 URL을 clone |
+| `LLM_API_KEY` | ✅ | — | LLM 프로바이더 API 키 |
+| `DATABASE_URL` | ✅ | - | 워크플로우 JSON을 조회할 오케스트레이터 DB 주소 |
 
 ### API
 
