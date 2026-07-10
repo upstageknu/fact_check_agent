@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.DS_Store
+fact_check.py
+api.py
