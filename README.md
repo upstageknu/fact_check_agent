@@ -1,6 +1,6 @@
-# 사실 판단 Agent (Fact-Check Agent) — Grok + Tool Use
+# 사실 판단 Agent (Fact-Check Agent) — Solar Pro 3 + Tool Use
 
-버그바운티 리포트의 claim을 **LLM(Grok)이 도구를 하나씩 호출**하며 실제 코드베이스와 대조해
+버그바운티 리포트의 claim을 **Upstage Solar Pro 3가 도구를 하나씩 호출**하며 실제 코드베이스와 대조해
 검증하는 Agent입니다. rule-base가 아니라 `사실판단_Agent_Gemini.ipynb`의 도구 호출 루프 패턴을
 따릅니다 — LLM이 어떤 함수/헤더/커밋/호출을 검증할지 스스로 판단해 도구를 호출하고, **도구는
 실제 코드베이스를 결정론적으로 조회**합니다.
@@ -48,7 +48,7 @@
 1. `report_id`로 워크플로우 JSON을 조회 → `agent_results.parser` 확보
 2. **함수 존재 검증 대상은 `cited_library_functions`(라이브러리 함수)만** 사용
    (`cited_user_defined_functions`는 존재 검증 대상이 아님)
-3. LLM(Grok)이 도구를 하나씩 호출하며 검증 → 최종 `fact_check` JSON 생성
+3. Solar Pro 3가 도구를 하나씩 호출하며 검증 → 최종 `fact_check` JSON 생성
 4. **모든 과정을 `addLog`로 DB(events)에 실시간 기록**(설명가능 AI): 사실 판단 시작/완료,
    함수 사용법 사전 판단 시작/완료, 그리고 **각 도구 호출의 시작(`tool_start`)·종료(`tool_end`)**.
    최종 결과는 `invocations`로 등록. (로그·등록 모두 best-effort)
@@ -64,7 +64,7 @@ fact_check/
 ├── function_call_checker.py  # function_call 판단용 별도 LLM 호출(배열 1회)
 ├── prompts.py                # Fact-check Agent 시스템 프롬프트
 ├── orchestrator.py           # 오케스트레이터 연동: fetch_workflow / post_invocation / addLog
-├── config.py                 # 환경설정(LLM_*/ORCHESTRATOR_BASE_URL/REPO_PATH) + Grok 클라이언트
+├── config.py                 # 환경설정(UPSTAGE_*/SOLAR_MODEL/ORCHESTRATOR_BASE_URL/REPO_PATH)
 ├── fact_check_tools.py       # 결정론 검증 엔진 (심볼/커밋/파일 인덱싱) — tools.py가 사용
 ├── main.py                   # CLI (python main.py <report_id>)
 ├── requirements.txt / Dockerfile / .dockerignore / .env.example / .gitignore
@@ -84,7 +84,7 @@ fact_check/
 - **git** + **universal-ctags** (심볼 인덱싱). 로컬 macOS 기본 `ctags`(BSD)는 `-R` 미지원 →
   `brew install universal-ctags` 권장(없으면 정규식 grep 폴백, 정확도↓). Docker엔 포함됨.
 - 검증 대상 소스 저장소 (예: curl) — `REPO_PATH`
-- **Grok(xAI) API 키** — https://console.x.ai (Agent가 도구 호출을 구동하므로 필수)
+- **Upstage API 키** — https://console.upstage.ai (Solar Pro 3 도구 호출에 필수)
 
 ## 환경변수
 
@@ -92,8 +92,11 @@ fact_check/
 
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `LLM_API_KEY` | ✅ | — | LLM 프로바이더 API 키 |
-| `DATABASE_URL` | ✅ | - | 워크플로우 JSON을 조회할 오케스트레이터 DB 주소 |
+| `UPSTAGE_API_KEY` | ✅ | — | Upstage API 키 |
+| `UPSTAGE_BASE_URL` |  | `https://api.upstage.ai/v1` | Upstage OpenAI 호환 API 주소 |
+| `SOLAR_MODEL` |  | `solar-pro3` | 호출할 Solar 모델 |
+| `ORCHESTRATOR_BASE_URL` | ✅ | — | 워크플로우 API 기본 주소 |
+| `DATABASE_URL` |  | — | 기존 실행 환경용 API 주소 별칭 |
 
 ### API
 
@@ -127,7 +130,7 @@ fact_check/
 ```
 
 에러 시 `output`은 `null`, `status_code`는 HTTP 상태와 일치. 주요 코드:
-조회 실패 `502`, `agent_results`/`parser` 없음 `422`, `LLM_API_KEY` 미설정 `500`,
+조회 실패 `502`, `agent_results`/`parser` 없음 `422`, `UPSTAGE_API_KEY` 미설정 `500`,
 LLM 호출 실패 `502`, 저장소 오류 `500`.
 
 ## Docker
@@ -136,14 +139,14 @@ LLM 호출 실패 `502`, 저장소 오류 `500`.
 docker build -t fact-check-agent .
 
 docker run --rm -p 8000:8000 \
-  -e LLM_API_KEY=YOUR_XAI_KEY \
+  -e UPSTAGE_API_KEY=YOUR_UPSTAGE_KEY \
   -e ORCHESTRATOR_BASE_URL=https://api.mingyo.kim \
   -v /host/path/curl:/repo -e REPO_PATH=/repo \
   fact-check-agent
 
 # 또는 기동 시 clone
 docker run --rm -p 8000:8000 \
-  -e LLM_API_KEY=YOUR_XAI_KEY \
+  -e UPSTAGE_API_KEY=YOUR_UPSTAGE_KEY \
   -e REPO_URL=https://github.com/curl/curl -e REPO_PATH=/repo \
   fact-check-agent
 ```

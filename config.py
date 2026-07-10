@@ -1,6 +1,6 @@
-"""환경설정 — Grok(LLM) + 오케스트레이터 DB + 결정론적 검증 대상 저장소(REPO_PATH).
+"""환경설정 — Upstage Solar Pro 3 + 오케스트레이터 DB + 결정론적 검증 대상 저장소(REPO_PATH).
 
-- LLM(Grok)은 결정론적 검증 결과를 사람이 읽기 쉬운 요약(summary)으로 만드는 데만 사용한다.
+- Solar Pro 3는 도구 호출을 조정하고 검증 결과를 사람이 읽기 쉬운 요약(summary)으로 만든다.
   (사실 판정 자체는 fact_check_tools.py의 ctags/git 조회로 결정론적으로 수행된다.)
 - API 키/DB 주소/저장소 경로는 .env 또는 환경변수로만 주입한다(코드에 하드코딩 금지).
 """
@@ -12,10 +12,10 @@ from openai import OpenAI
 
 load_dotenv()
 
-# ── LLM (Grok, OpenAI 호환 엔드포인트) ──────────────────────────────
-LLM_API_KEY = os.getenv("LLM_API_KEY")
-LLM_BASE_URL = "https://api.x.ai/v1"
-LLM_MODEL = "grok-4"
+# ── Upstage Solar Pro 3 (OpenAI 호환 엔드포인트) ────────────────────
+UPSTAGE_API_KEY = os.getenv("UPSTAGE_API_KEY")
+UPSTAGE_BASE_URL = os.getenv("UPSTAGE_BASE_URL", "https://api.upstage.ai/v1")
+SOLAR_MODEL = os.getenv("SOLAR_MODEL", "solar-pro3")
 
 # ── 오케스트레이터 DB ───────────────────────────────────────────────
 # /invoke가 워크플로우 JSON을 조회하고, 결과/이벤트를 등록할 기본 주소.
@@ -36,12 +36,12 @@ _client = None
 
 
 def get_client() -> OpenAI:
-    """OpenAI 호환 Grok 클라이언트를 지연 생성한다(키가 없으면 명확한 에러)."""
+    """Upstage Solar 클라이언트를 지연 생성한다(키가 없으면 명확한 에러)."""
     global _client
     if _client is None:
-        if not LLM_API_KEY:
+        if not UPSTAGE_API_KEY:
             raise RuntimeError(
-                "LLM_API_KEY가 설정되지 않았습니다. .env 파일이나 환경변수로 설정하세요."
+                "UPSTAGE_API_KEY가 설정되지 않았습니다. .env 파일이나 환경변수로 설정하세요."
             )
-        _client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
+        _client = OpenAI(base_url=UPSTAGE_BASE_URL, api_key=UPSTAGE_API_KEY)
     return _client

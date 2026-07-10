@@ -1,10 +1,13 @@
 env:
   required:
     - ORCHESTRATOR_BASE_URL
-    - LLM_API_KEY  optional:
+    - UPSTAGE_API_KEY
+  optional:
     - DATABASE_URL
     - REPO_PATH
     - REPO_URL
+    - UPSTAGE_BASE_URL
+    - SOLAR_MODEL
 
 name: fact_check
 

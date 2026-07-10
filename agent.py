@@ -1,6 +1,6 @@
 """LLM Agent 도구 호출 루프 (사실판단_Agent_Gemini.ipynb의 run 패턴).
 
-LLM(Grok)이 tool을 하나씩 호출하며 검증을 진행한다:
+Solar Pro 3가 tool을 하나씩 호출하며 검증을 진행한다:
   chat.completions → tool_calls 있으면 실제 함수 실행 → 결과를 다시 전달 → 반복
   tool_calls가 없으면 최종 답변(JSON)으로 간주.
 
@@ -12,14 +12,14 @@ import json
 
 from pydantic import BaseModel
 
-from config import LLM_MODEL, get_client
+from config import SOLAR_MODEL, get_client
 
 MAX_STEPS = 24
 
 
 class Agent(BaseModel):
     name: str = "Agent"
-    model: str = LLM_MODEL
+    model: str = SOLAR_MODEL
     instructions: str = "You are a helpful Agent"
     tools: list = []
 

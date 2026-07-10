@@ -9,7 +9,7 @@ import json
 import logging
 
 from agent import extract_json
-from config import LLM_MODEL, get_client
+from config import SOLAR_MODEL, get_client
 
 logger = logging.getLogger("function_call_checker")
 
@@ -52,7 +52,7 @@ def judge_function_calls(raw_report_txt: str, calls) -> list:
         return []
     payload = {"raw_report_txt": raw_report_txt or "", "function_calls": calls}
     response = get_client().chat.completions.create(
-        model=LLM_MODEL,
+        model=SOLAR_MODEL,
         messages=[
             {"role": "system", "content": FUNCTION_CALL_CHECK_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
