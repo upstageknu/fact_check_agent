@@ -1,0 +1,4 @@
+env:
+  required:
+    - DATABASE_URL
+    - LLM_API_KEY
