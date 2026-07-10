@@ -25,11 +25,13 @@ from tools import (
 
 logger = logging.getLogger("fact_check_runner")
 
+# 함수 존재 여부(library_function_check)는 결정론적 사실이라 시스템이 symbol_lookup으로 직접 채운다.
+# (에이전트 tools에서는 제외) 에이전트는 헤더/커밋/함수사용법만 담당한다.
 fact_check_agent = Agent(
     name="Fact-check Agent",
     model=LLM_MODEL,
     instructions=FACT_CHECK_AGENT_PROMPT,
-    tools=[symbol_lookup, git_history_query, header_lookup, function_call],
+    tools=[git_history_query, header_lookup, function_call],
 )
 
 
@@ -40,11 +42,10 @@ def build_claim(parser_result: dict) -> dict:
     사용자 정의 함수(cited_user_defined_functions)는 존재 검증 대상이 아니다.
     """
     pr = parser_result or {}
-    library_functions = pr.get("cited_library_functions", []) or []
     return {
         "title": pr.get("title"),
         "summary": pr.get("summary"),
-        "cited_functions": library_functions,
+        "cited_library_functions": pr.get("cited_library_functions", []) or [],
         "cited_headers": pr.get("cited_headers", []) or [],
         "cited_commits": pr.get("cited_commits", []) or [],
         "function_calls": pr.get("function_calls", []) or [],
@@ -54,17 +55,37 @@ def build_claim(parser_result: dict) -> dict:
 
 
 def _fallback_result(claim: dict, reason: str) -> dict:
-    """LLM 최종 응답을 JSON으로 파싱하지 못했을 때의 안전 기본값."""
+    """LLM 최종 응답을 JSON으로 파싱하지 못했을 때의 안전 기본값(library_function_check는 이후 별도로 채움)."""
     return {
-        "function_check": [],
-        "file_check": [],
+        "library_function_check": [],
         "header_check": [],
         "commit_check": [],
         "function_call_check": [],
         "poc_check": {"compilable": None, "compile_error": None},
-        "reachability": {"verdict": "UNKNOWN", "reason": "도달성 분석 도구가 없어 확인 불가"},
         "summary": f"사실 판단 결과 파싱 실패: {reason}",
     }
+
+
+def _check_library_functions(cited_library_functions, event_logger) -> list:
+    """cited_library_functions의 각 함수명이 실제 존재하는지 symbol_lookup으로 확인한다(결정론).
+
+    각 호출의 시작/종료를 이벤트로 남기고, [{name, exists, location}, ...]를 반환한다.
+    """
+    results = []
+    for name in cited_library_functions:
+        event_logger(
+            "tool_start",
+            f"[symbol_lookup] 호출 시작 name={name!r}",
+            {"tool": "symbol_lookup", "args": {"name": name}, "phase": "start"},
+        )
+        r = symbol_lookup(name)
+        event_logger(
+            "tool_end",
+            f"[symbol_lookup] 호출 종료 → exists={r.get('exists')}",
+            {"tool": "symbol_lookup", "args": {"name": name}, "result": r, "phase": "end"},
+        )
+        results.append(r)
+    return results
 
 
 def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str = "", trace_id: str = "", request_id: str = "") -> dict:
@@ -94,6 +115,12 @@ def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("최종 응답 JSON 파싱 실패: %s | raw[:200]=%r", exc, (final or "")[:200])
         result = _fallback_result(claim, str(exc))
+
+    # 라이브러리 함수 존재 여부는 시스템이 symbol_lookup으로 결정론적으로 채운다(LLM 출력에 의존하지 않음).
+    event_logger("fact_check", "라이브러리 함수 존재 검증 시작",
+                 {"cited_library_functions": claim["cited_library_functions"]})
+    result["library_function_check"] = _check_library_functions(claim["cited_library_functions"], event_logger)
+    event_logger("fact_check", "라이브러리 함수 존재 검증 완료", {"library_function_check": result["library_function_check"]})
 
     event_logger("fact_check", "사실 판단 완료", {"summary": result.get("summary")})
     return result
