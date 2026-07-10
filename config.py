@@ -24,7 +24,9 @@ ORCHESTRATOR_BASE_URL = os.getenv("DATABASE_URL") or "https://api.mingyo.kim"
 
 # ── 결정론적 검증 대상 저장소 ───────────────────────────────────────
 # 리포트의 함수/커밋/헤더/파일 인용을 대조할 실제 소스 저장소의 로컬 경로.
-REPO_PATH = "/repo"
+REPO_PATH = os.getenv("REPO_PATH", "/repo")
+# REPO_PATH가 비어 있으면 tools.ensure_repo가 기동 시 이 URL을 clone 한다(하드코딩).
+REPO_URL = "https://github.com/curl/curl"
 
 _client = None
 

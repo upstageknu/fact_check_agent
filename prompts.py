@@ -24,23 +24,20 @@ FACT_CHECK_AGENT_PROMPT = """너는 사실 검증관 Fact-checker Agent다.
 5. 모든 판단은 도구 결과에 기반해 summary에 요약한다.
 
 이 환경에는 파일 조회, PoC 컴파일, 도달성 분석 도구가 없다. 따라서:
-- file_check는 빈 배열 []로 둔다.
 - poc_check는 {"compilable": null, "compile_error": null}로 둔다.
-- reachability.verdict는 "UNKNOWN"으로 두고 그 이유를 적는다.
 
 출력 규칙:
 - 반드시 JSON만 출력한다. 마크다운, 설명문, 코드펜스는 출력하지 않는다.
 - 배열 항목이 없으면 []를 출력한다.
-- 확인 불가능한 값은 null 또는 "UNKNOWN"으로 둔다.
+- 확인 불가능한 값은 null로 둔다.
+- 이유 등은 한국어로 서술한다.
 
 출력 형식:
 {
-"function_check": [{"name": "curl_mfprintf", "exists": true, "location": "lib/mprintf.c:123"}],
-"file_check": [],
+"library_function_check": [{"name": "curl_mfprintf", "exists": true, "location": "lib/mprintf.c:123"}],
 "header_check": [{"name": "curl_printf.h", "exists": true}],
 "commit_check": [{"ref": "abc123", "exists": false, "reason": "저장소에서 해당 commit을 찾을 수 없음"}],
 "function_call_check": [{"call": "curl_mfprintf(stdout, user_input)", "valid": true, "reason": "...", "confidence": 0.8}],
 "poc_check": {"compilable": null, "compile_error": null},
-"reachability": {"verdict": "UNKNOWN", "reason": "도달성 분석 도구가 없어 확인 불가"},
 "summary": "함수와 헤더는 존재하지만 commit은 확인되지 않음"
 }"""
