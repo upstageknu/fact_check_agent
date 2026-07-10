@@ -1,4 +1,15 @@
 env:
   required:
+    - ORCHESTRATOR_BASE_URL
+    - LLM_API_KEY  optional:
     - DATABASE_URL
-    - LLM_API_KEY
+    - REPO_PATH
+    - REPO_URL
+
+name: fact_check
+
+endpoints:
+  health: GET /health
+  invoke: POST /invoke
+
+port: 8000

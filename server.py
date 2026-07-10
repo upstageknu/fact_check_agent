@@ -68,13 +68,14 @@ def _startup() -> None:
 # ---------------------------------------------------------------------------
 
 class HealthResponse(BaseModel):
-    status: Literal["up", "down"]
+    status: Literal["ready", "down"]
 
 
 class InvokeRequest(BaseModel):
     report_id: str = Field(..., description="검증 대상 리포트 ID. 이 ID로 오케스트레이터 DB를 조회한다.")
     trace_id: str = Field("", description="분산 추적 ID(응답/로그에 그대로 전달)")
     request_id: str = Field("", description="요청 ID(응답/로그에 그대로 전달)")
+    agent_job_id: int | None = Field(None, description="오케스트레이터가 claim한 workflow_agent_jobs.id")
 
     model_config = {
         "json_schema_extra": {
@@ -141,7 +142,7 @@ def unhandled_exception_handler(request: Request, exc: Exception):
     description="서비스가 요청을 처리할 준비가 되었으면 `up`, 아니면(예: LLM_API_KEY 미설정) `down`.",
 )
 def health():
-    return {"status": "up" if LLM_API_KEY else "down"}
+    return {"status": "ready" if LLM_API_KEY else "down"}
 
 
 @app.post(
@@ -215,7 +216,7 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
     """최종 결과를 오케스트레이터 invocations 엔드포인트로 POST한다(실패해도 응답은 정상)."""
     report_id = report.get("report_id") or req.report_id
     payload = {
-        "agent_job_id": 0,
+        "agent_job_id": req.agent_job_id,
         "endpoint_url": REPO_PATH,
         "method": "POST",
         "request_payload": {
@@ -229,7 +230,7 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
         "error": {},
         "status_code": 200,
         "message": "fact_check completed",
-        "status": "success",
+        "status": "SUCCEEDED",
         "http_status": 200,
         "result_code": "OK",
         "result_message": "fact_check completed",

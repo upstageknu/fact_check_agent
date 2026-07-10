@@ -20,7 +20,11 @@ LLM_MODEL = "grok-4"
 # ── 오케스트레이터 DB ───────────────────────────────────────────────
 # /invoke가 워크플로우 JSON을 조회하고, 결과/이벤트를 등록할 기본 주소.
 # .env의 DATABASE_URL을 기본값으로 사용한다(없으면 아래 fallback).
-ORCHESTRATOR_BASE_URL = os.getenv("DATABASE_URL") or "https://api.mingyo.kim"
+ORCHESTRATOR_BASE_URL = (
+    os.getenv("ORCHESTRATOR_BASE_URL")
+    or os.getenv("DATABASE_URL")
+    or "http://127.0.0.1:8000"
+)
 
 # ── 결정론적 검증 대상 저장소 ───────────────────────────────────────
 # 리포트의 함수/커밋/헤더/파일 인용을 대조할 실제 소스 저장소의 로컬 경로.

@@ -6,7 +6,7 @@
 
 경로:
   GET  {BASE}/upstageknu2607/db/workflows/{report_id}
-  POST {BASE}/upstageknu2607/db/{report_id}/agents/fact_check/invocations
+  POST {BASE}/upstageknu2607/db/workflows/{report_id}/agents/fact_check/invocations
   POST {BASE}/upstageknu2607/db/workflows/{report_id}/agents/fact_check/events
 """
 
@@ -31,7 +31,7 @@ def workflow_url(report_id: str) -> str:
 
 
 def invocations_url(report_id: str) -> str:
-    return f"{_base()}/upstageknu2607/db/{report_id}/agents/{AGENT}/invocations"
+    return f"{_base()}/upstageknu2607/db/workflows/{report_id}/agents/{AGENT}/invocations"
 
 
 def events_url(report_id: str) -> str:
@@ -64,7 +64,7 @@ def addLog(
     level: str = "INFO",
     payload: dict | None = None,
     agent_name: str = AGENT,
-    agent_job_id: int = 0,
+    agent_job_id: int | None = None,
     trace_id: str = "",
     request_id: str = "",
     source: str = "agent",
