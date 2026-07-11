@@ -26,7 +26,7 @@ from openai import OpenAIError
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import LLM_API_KEY, LLM_MODEL, ORCHESTRATOR_BASE_URL, REPO_PATH
+from config import ORCHESTRATOR_BASE_URL, REPO_PATH, SOLAR_MODEL, UPSTAGE_API_KEY
 from runner import run_fact_check
 from fact_check_tools import RepoError
 from orchestrator import fetch_workflow, invocations_url, post_invocation
@@ -44,7 +44,7 @@ app = FastAPI(
         "결정론적으로 대조**하는 Agent (Active Pull).\n\n"
         "`POST /invoke`에 `report_id`를 주면 오케스트레이터 DB에서 워크플로우 JSON을 조회하고, "
         "그 안의 `agent_results.parser`를 검증해 `fact_check_result`를 만든 뒤 DB에 등록한다.\n\n"
-        "사실 판정은 100% 결정론적이며(ctags/git), Grok은 결과 요약(summary)만 생성한다. "
+        "코드 근거는 결정론적으로 조회하며(ctags/git), Solar Pro 3가 도구 호출과 결과 요약을 담당한다. "
         "진행 중 각 단계는 events 로 실시간 기록되어 판정 근거를 추적할 수 있다(설명가능 AI).\n\n"
         f"- 조회: `GET {ORCHESTRATOR_BASE_URL}/upstageknu2607/db/workflows/{{report_id}}`\n"
         f"- 등록: `POST {ORCHESTRATOR_BASE_URL}/upstageknu2607/db/{{report_id}}/agents/fact_check/invocations`\n"
@@ -68,13 +68,14 @@ def _startup() -> None:
 # ---------------------------------------------------------------------------
 
 class HealthResponse(BaseModel):
-    status: Literal["up", "down"]
+    status: Literal["ready", "down"]
 
 
 class InvokeRequest(BaseModel):
     report_id: str = Field(..., description="검증 대상 리포트 ID. 이 ID로 오케스트레이터 DB를 조회한다.")
     trace_id: str = Field("", description="분산 추적 ID(응답/로그에 그대로 전달)")
     request_id: str = Field("", description="요청 ID(응답/로그에 그대로 전달)")
+    agent_job_id: int | None = Field(None, description="오케스트레이터가 claim한 workflow_agent_jobs.id")
 
     model_config = {
         "json_schema_extra": {
@@ -138,10 +139,10 @@ def unhandled_exception_handler(request: Request, exc: Exception):
     response_model=HealthResponse,
     tags=["system"],
     summary="헬스체크",
-    description="서비스가 요청을 처리할 준비가 되었으면 `up`, 아니면(예: LLM_API_KEY 미설정) `down`.",
+    description="서비스가 요청을 처리할 준비가 되었으면 `up`, 아니면(예: UPSTAGE_API_KEY 미설정) `down`.",
 )
 def health():
-    return {"status": "up" if LLM_API_KEY else "down"}
+    return {"status": "ready" if UPSTAGE_API_KEY else "down"}
 
 
 @app.post(
@@ -153,7 +154,7 @@ def health():
         "요청 본문: `{\"report_id\": \"...\", \"trace_id\": \"...\", \"request_id\": \"...\"}`.\n\n"
         "1. `GET {BASE}/upstageknu2607/db/workflows/{report_id}` 로 워크플로우 JSON 조회\n"
         "2. `agent_results.parser`의 함수/커밋/헤더/파일/호출체인을 코드베이스와 결정론적으로 대조\n"
-        "3. Grok으로 결과 요약(summary) 생성 (best-effort)\n"
+        "3. Solar Pro 3로 결과 요약(summary) 생성 (best-effort)\n"
         "4. 진행 단계는 `.../agents/fact_check/events` 로 실시간 로그, 최종 결과는 "
         "`.../agents/fact_check/invocations` 로 등록 (모두 best-effort)\n\n"
         "응답: `{\"status_code\": 200, \"message\": \"fact_check completed\", \"output\": {...}}`"
@@ -189,7 +190,7 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
         fact_check_result = run_fact_check(parser_result, raw_report_txt=raw_report_txt)
     except RepoError as exc:
         raise HTTPException(status_code=500, detail=f"저장소 검증 오류: {exc}")
-    except RuntimeError as exc:  # 예: LLM_API_KEY 미설정
+    except RuntimeError as exc:  # 예: UPSTAGE_API_KEY 미설정
         raise HTTPException(status_code=500, detail=str(exc))
     except OpenAIError as exc:  # 예: 잘못된 API 키, 모델명 오류, 레이트리밋 등
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {exc}")
@@ -212,6 +213,7 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
     """최종 결과를 오케스트레이터 invocations 엔드포인트로 POST한다(실패해도 응답은 정상)."""
     report_id = report.get("report_id") or req.report_id
     payload = {
+        "agent_job_id": req.agent_job_id,
         "endpoint_url": REPO_PATH,
         "method": "POST",
         "request_payload": {
@@ -223,6 +225,8 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
         "response_payload": output,
         "output": output["fact_check"],
         "error": {},
+        "status_code": 200,
+        "message": "fact_check completed",
         "status": "SUCCEEDED",
         "http_status": 200,
         "result_code": "OK",
@@ -233,7 +237,7 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
         "retry_count": 0,
         "timeout_seconds": 30,
         "duration_ms": duration_ms,
-        "model": LLM_MODEL,
+        "model": SOLAR_MODEL,
         "prompt_version": PROMPT_VERSION,
         "workflow_status": report.get("workflow_status") or "",
     }

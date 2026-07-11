@@ -1,6 +1,6 @@
 """사실 판단 Agent 오케스트레이션.
 
-LLM(Grok)이 도구(symbol_lookup / git_history_query / header_lookup / function_call)를
+Solar Pro 3가 도구(symbol_lookup / git_history_query / header_lookup / function_call)를
 하나씩 호출하며 리포트의 claim을 실제 코드베이스와 대조하고, 최종 fact_check JSON을 만든다.
 """
 
@@ -8,7 +8,8 @@ import json
 import logging
 
 from agent import Agent, extract_json, run
-from config import LLM_MODEL
+from config import SOLAR_MODEL
+from orchestrator import addLog
 from prompts import FACT_CHECK_AGENT_PROMPT
 from tools import (
     function_call,
@@ -26,7 +27,7 @@ logger = logging.getLogger("fact_check_runner")
 # (에이전트 tools에서는 제외) 에이전트는 헤더/커밋/함수사용법만 담당한다.
 fact_check_agent = Agent(
     name="Fact-check Agent",
-    model=LLM_MODEL,
+    model=SOLAR_MODEL,
     instructions=FACT_CHECK_AGENT_PROMPT,
     tools=[git_history_query, header_lookup, function_call],
 )
