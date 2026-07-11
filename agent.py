@@ -3,8 +3,6 @@
 LLM(Grok)이 tool을 하나씩 호출하며 검증을 진행한다:
   chat.completions → tool_calls 있으면 실제 함수 실행 → 결과를 다시 전달 → 반복
   tool_calls가 없으면 최종 답변(JSON)으로 간주.
-
-event_logger 콜백을 주면 각 도구 호출을 이벤트 로그로 남긴다(설명가능 AI).
 """
 
 import inspect
@@ -59,16 +57,7 @@ def extract_json(text: str) -> dict:
     return json.loads(text)
 
 
-def _brief(result) -> str:
-    """도구 결과를 로그 메시지용 한 줄 요약으로."""
-    if isinstance(result, dict):
-        for key in ("exists", "valid"):
-            if key in result:
-                return f"{key}={result[key]}"
-    return str(result)[:80]
-
-
-def run(messages, agent, event_logger=None, max_steps=MAX_STEPS):
+def run(messages, agent, max_steps=MAX_STEPS):
     """도구 호출 루프를 돌려 최종 응답 문자열을 반환한다."""
     client = get_client()
     tool_schemas = [function_to_schema(t) for t in agent.tools]
@@ -102,23 +91,7 @@ def run(messages, agent, event_logger=None, max_steps=MAX_STEPS):
             fn = tool_map.get(name)
             print(f"  \U0001F527 [{agent.name}] {name}({args})")
 
-            # 도구 호출 시작 로그
-            if event_logger:
-                event_logger(
-                    "tool_start",
-                    f"[{name}] 호출 시작 args={args}",
-                    {"tool": name, "args": args, "phase": "start"},
-                )
-
             result = fn(**args) if fn else {"error": f"unknown tool: {name}"}
-
-            # 도구 호출 종료 로그(결과 포함)
-            if event_logger:
-                event_logger(
-                    "tool_end",
-                    f"[{name}] 호출 종료 → {_brief(result)}",
-                    {"tool": name, "args": args, "result": result, "phase": "end"},
-                )
 
             messages.append({
                 "role": "tool",

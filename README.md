@@ -41,7 +41,6 @@
 [오케스트레이터] ── POST /invoke {report_id, trace_id, request_id} ──▶ [Fact-Check Agent]
        │                                                                    │
        ├── GET  db/workflows/{report_id}  (리포트 구조화 JSON 조회) ◀───────┤
-       ├── POST db/workflows/{report_id}/agents/fact_check/events  ◀────────┤ (도구 호출마다 로그)
        └── POST db/{report_id}/agents/fact_check/invocations       ◀────────┘ (최종 결과 등록)
 ```
 
@@ -49,21 +48,19 @@
 2. **함수 존재 검증 대상은 `cited_library_functions`(라이브러리 함수)만** 사용
    (`cited_user_defined_functions`는 존재 검증 대상이 아님)
 3. LLM(Grok)이 도구를 하나씩 호출하며 검증 → 최종 `fact_check` JSON 생성
-4. **모든 과정을 `addLog`로 DB(events)에 실시간 기록**(설명가능 AI): 사실 판단 시작/완료,
-   함수 사용법 사전 판단 시작/완료, 그리고 **각 도구 호출의 시작(`tool_start`)·종료(`tool_end`)**.
-   최종 결과는 `invocations`로 등록. (로그·등록 모두 best-effort)
+4. 최종 결과를 `invocations`로 등록 (best-effort)
 
 ## 파일 구조
 
 ```text
 fact_check/
 ├── server.py                 # HTTP API (FastAPI) — GET /health, POST /invoke
-├── runner.py                 # Agent 오케스트레이션 (build_claim + 도구 루프 실행 + 로깅)
-├── agent.py                  # Agent 모델 + run(도구 호출 루프, 도구 시작/종료 로그) + extract_json
+├── runner.py                 # Agent 오케스트레이션 (build_claim + 도구 루프 실행)
+├── agent.py                  # Agent 모델 + run(도구 호출 루프) + extract_json
 ├── tools.py                  # 도구 4종 (symbol_lookup/git_history_query/header_lookup/function_call) + 헤더 분류
 ├── function_call_checker.py  # function_call 판단용 별도 LLM 호출(배열 1회)
 ├── prompts.py                # Fact-check Agent 시스템 프롬프트
-├── orchestrator.py           # 오케스트레이터 연동: fetch_workflow / post_invocation / addLog
+├── orchestrator.py           # 오케스트레이터 연동: fetch_workflow / post_invocation
 ├── config.py                 # 환경설정(LLM_*/ORCHESTRATOR_BASE_URL/REPO_PATH) + Grok 클라이언트
 ├── fact_check_tools.py       # 결정론 검증 엔진 (심볼/커밋/파일 인덱싱) — tools.py가 사용
 ├── main.py                   # CLI (python main.py <report_id>)
