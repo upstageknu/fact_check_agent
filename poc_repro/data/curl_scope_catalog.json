@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "source_project": "curl/curl",
+  "verified_sources": [
+    {
+      "url": "https://github.com/curl/curl",
+      "note": "Repository README describes curl as a command-line tool and libcurl as the library curl uses."
+    },
+    {
+      "url": "https://github.com/curl/curl/tree/master/src",
+      "note": "src/ contains curl command-line tool sources."
+    },
+    {
+      "url": "https://github.com/curl/curl/tree/master/lib",
+      "note": "lib/ contains libcurl implementation sources."
+    },
+    {
+      "url": "https://github.com/curl/curl/tree/master/include/curl",
+      "note": "include/curl contains public libcurl headers."
+    },
+    {
+      "url": "https://curl.se/docs/manpage.html",
+      "note": "curl man page documents curl as a command-line tool powered by libcurl."
+    },
+    {
+      "url": "https://curl.se/libcurl/",
+      "note": "libcurl page documents libcurl as a client-side URL transfer library with a C API."
+    }
+  ],
+  "repo_paths": {
+    "curl_cli": ["src/", "src/tool_", "docs/cmdline-opts/", "docs/MANUAL.md"],
+    "libcurl": ["lib/", "include/curl/", "docs/libcurl/", "docs/examples/"]
+  },
+  "curl_cli_terms": [
+    "curl command",
+    "curl tool",
+    "curl executable",
+    "curl.exe",
+    "wcurl",
+    "command-line",
+    "command line",
+    "cmdline",
+    "src/tool_",
+    "docs/cmdline-opts",
+    "--url",
+    "--config",
+    "--next",
+    "--libcurl",
+    "--insecure",
+    "--proxy",
+    "--resolve",
+    "--connect-to",
+    "--haproxy-protocol",
+    "--haproxy-clientip",
+    "--write-out",
+    "--variable",
+    "--expand-url"
+  ],
+  "libcurl_terms": [
+    "libcurl",
+    "curl/curl.h",
+    "include/curl",
+    "curl_easy_",
+    "curl_multi_",
+    "curl_share_",
+    "curl_url_",
+    "curl_global_",
+    "curl_mime_",
+    "curl_slist",
+    "CURLOPT_",
+    "CURLINFO_",
+    "CURLcode",
+    "CURLUcode",
+    "CURLMcode",
+    "CURLSHcode",
+    "libcurl.pc",
+    "curl_easy_setopt",
+    "curl_easy_perform",
+    "curl_easy_cleanup"
+  ],
+  "non_scope_terms": [
+    "pycurl",
+    "curl-rust",
+    "curl_cffi",
+    "curlconverter",
+    "curlie",
+    "curl-loader"
+  ]
+}
+

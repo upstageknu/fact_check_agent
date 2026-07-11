@@ -10,10 +10,12 @@ import logging
 from agent import Agent, extract_json, run
 from config import SOLAR_MODEL
 from orchestrator import addLog
+from poc_tool import get_poc_result, poc_reproduce, prime_poc_context
 from prompts import FACT_CHECK_AGENT_PROMPT
 from tools import (
     function_call,
     get_engine,
+    get_function_call_results,
     git_history_query,
     header_lookup,
     prime_function_calls,
@@ -24,12 +26,12 @@ from tools import (
 logger = logging.getLogger("fact_check_runner")
 
 # 함수 존재 여부(library_function_check)는 결정론적 사실이라 시스템이 symbol_lookup으로 직접 채운다.
-# (에이전트 tools에서는 제외) 에이전트는 헤더/커밋/함수사용법만 담당한다.
+# (에이전트 tools에서는 제외) 에이전트는 헤더/커밋/함수사용법/PoC 재현을 담당한다.
 fact_check_agent = Agent(
     name="Fact-check Agent",
     model=SOLAR_MODEL,
     instructions=FACT_CHECK_AGENT_PROMPT,
-    tools=[git_history_query, header_lookup, function_call],
+    tools=[git_history_query, header_lookup, function_call, poc_reproduce],
 )
 
 
@@ -73,12 +75,14 @@ def _check_library_functions(cited_library_functions) -> list:
     return [symbol_lookup(name) for name in cited_library_functions]
 
 
-def run_fact_check(parser_result: dict, raw_report_txt: str = "") -> dict:
+def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str = "") -> dict:
     """parser 결과를 받아 Agent 도구 호출 루프로 검증하고 fact_check_result(dict)를 반환한다.
 
     raw_report_txt(보고서 원문)는 function_call 도구가 참조하는 별도 LLM 판단의 입력으로 쓰인다.
+    report_id는 poc_reproduce 도구가 PoC를 재현할 때 case 식별자로 사용한다.
     """
     get_engine()  # 저장소 인덱스 준비(최초 1회)
+    prime_poc_context(report_id, parser_result, raw_report_txt)  # PoC 재현 도구 입력 주입
     claim = build_claim(parser_result)
 
     # 함수 호출 배열 '전체'를 한 번의 LLM 호출로 사전 판단(이후 function_call 도구는 조회만).
@@ -103,5 +107,26 @@ def run_fact_check(parser_result: dict, raw_report_txt: str = "") -> dict:
 
     # 라이브러리 함수 존재 여부는 시스템이 symbol_lookup으로 결정론적으로 채운다(LLM 출력에 의존하지 않음).
     result["library_function_check"] = _check_library_functions(claim["cited_library_functions"])
+
+    # function_call_check도 prime_function_calls가 사전 판단한 결과로 시스템이 직접 채운다.
+    # 이렇게 하면 LLM이 프롬프트 예시를 베끼거나 리포트에 없는 호출을 지어내는 일이 없다.
+    result["function_call_check"] = get_function_call_results()
+
+    # header_check / commit_check도 parser의 cited_headers / cited_commits를 기준으로 시스템이
+    # 도구를 직접 호출해 채운다. LLM이 리포트에 없는 헤더/버전/커밋을 지어내는 것을 막는다.
+    result["header_check"] = [header_lookup(name) for name in claim["cited_headers"]]
+    result["commit_check"] = [git_history_query(ref) for ref in claim["cited_commits"]]
+
+    # poc_check도 LLM의 최종 JSON 전사에 의존하지 않고 시스템이 도구 결과로 직접 채운다.
+    # 에이전트가 이미 poc_reproduce를 호출했으면 그 결과를 재사용하고,
+    # PoC가 있는데도 호출하지 않았으면 여기서 한 번 결정론적으로 실행한다.
+    poc_result = get_poc_result()
+    if poc_result is None and (claim.get("poc_present") or claim.get("poc_code")):
+        poc_result = poc_reproduce()
+    if poc_result is not None:
+        result["poc_check"] = poc_result
+    else:
+        result["poc_check"] = {"compilable": None, "compile_error": None,
+                               "verdict": "NOT_EXECUTED", "skipped_reason": "PoC 코드 없음"}
 
     return result

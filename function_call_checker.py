@@ -101,4 +101,11 @@ def judge_function_calls(raw_report_txt: str, calls, signatures=None, user_defin
         ],
     )
     data = extract_json(response.choices[0].message.content)
-    return _coerce_valid_bool(data.get("function_call_check", []))
+    items = _coerce_valid_bool(data.get("function_call_check", []))
+    # call 문자열은 리포터 원문을 그대로 보존한다. LLM이 이스케이프 등을 정규화해 바꿔 써도,
+    # '순서 유지·입력당 결과 1개' 규약에 따라 입력 순서에 맞춰 원본 문자열로 되돌린다.
+    if len(items) == len(calls):
+        for original, item in zip(calls, items):
+            if isinstance(item, dict):
+                item["call"] = original
+    return items

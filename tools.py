@@ -48,6 +48,40 @@ SYSTEM_HEADERS = {
 }
 _SYSTEM_BASENAMES = {Path(h).name for h in SYSTEM_HEADERS}
 
+# C++ 표준 라이브러리 헤더 (확장자 없음, C++11~C++23). 대상 저장소에 없어도 "존재하는 표준 헤더"로 본다.
+# C 저장소(curl)에는 파일로 존재하지 않으므로, 이 목록으로 인식하지 않으면 not_found로 오탐된다.
+CPP_STANDARD_HEADERS = {
+    # 컨테이너
+    "array", "deque", "forward_list", "list", "map", "queue", "set", "stack",
+    "unordered_map", "unordered_set", "vector", "span", "flat_map", "flat_set", "mdspan",
+    # 문자열
+    "string", "string_view", "charconv", "format",
+    # 입출력
+    "iostream", "istream", "ostream", "fstream", "sstream", "iomanip", "ios", "iosfwd",
+    "streambuf", "syncstream", "spanstream", "print",
+    # 유틸리티/일반
+    "utility", "tuple", "optional", "variant", "any", "bitset", "functional", "memory",
+    "memory_resource", "scoped_allocator", "type_traits", "typeindex", "typeinfo",
+    "initializer_list", "compare", "coroutine", "source_location", "expected", "generator",
+    # 수치
+    "numeric", "complex", "valarray", "random", "ratio", "bit", "numbers",
+    # 알고리즘/반복자/범위
+    "algorithm", "execution", "ranges", "iterator", "concepts",
+    # 스레드/동시성
+    "thread", "mutex", "shared_mutex", "condition_variable", "future", "atomic",
+    "stop_token", "barrier", "latch", "semaphore",
+    # 시간/로케일
+    "chrono", "locale", "codecvt",
+    # 진단/예외
+    "exception", "stdexcept", "system_error",
+    # 정규식/파일시스템
+    "regex", "filesystem",
+    # C 호환 헤더 (C++판)
+    "cassert", "cctype", "cerrno", "cfenv", "cfloat", "cinttypes", "climits", "clocale",
+    "cmath", "csetjmp", "csignal", "cstdarg", "cstddef", "cstdint", "cstdio", "cstdlib",
+    "cstring", "ctime", "cuchar", "cwchar", "cwctype",
+}
+
 _engine = None
 
 # 요청별 격리를 위해 ContextVar 사용
@@ -58,6 +92,18 @@ _fc_results = contextvars.ContextVar("fact_check_fc_results", default=None)
 
 def set_report_context(raw_report_txt: str) -> None:
     _report_txt.set(raw_report_txt or "")
+
+
+def get_function_call_results() -> list:
+    """prime_function_calls가 사전 판단한 함수 호출 결과 목록을 반환한다.
+
+    시스템이 function_call_check 슬롯을 결정론적으로 채우는 데 쓴다(LLM 전사 비의존).
+    사전 판단이 없거나 함수 호출이 없었으면 []를 반환한다.
+    """
+    cache = _fc_results.get()
+    if not cache:
+        return []
+    return list(cache.values())
 
 
 def prime_function_calls(raw_report_txt: str, calls, signatures=None, user_defined_functions=None) -> list:
@@ -188,6 +234,7 @@ def header_lookup(name: str) -> dict:
     """헤더 파일이 존재하는지 조회한다.
 
     - 표준 C 라이브러리 헤더(stdio.h 등)는 존재로 본다(kind="standard_library").
+    - C++ 표준 라이브러리 헤더(iostream, thread 등 확장자 없는 것)도 존재로 본다(kind="cpp_standard_library").
     - POSIX/시스템 헤더(unistd.h, sys/socket.h 등)도 존재로 본다(kind="system").
     - 그 외에는 대상 저장소(REPO_PATH)에서 파일명으로 찾는다(kind="project" / "not_found").
     - 경로/괄호/따옴표가 붙어 와도 정규화한다: "<stdio.h>", "curl/curl.h", '"curl_printf.h"' 등.
@@ -198,6 +245,9 @@ def header_lookup(name: str) -> dict:
 
     if base in STANDARD_HEADERS:
         return {"name": raw, "exists": True, "kind": "standard_library", "location": None}
+
+    if cleaned in CPP_STANDARD_HEADERS:
+        return {"name": raw, "exists": True, "kind": "cpp_standard_library", "location": None}
 
     if cleaned in SYSTEM_HEADERS or base in _SYSTEM_BASENAMES:
         return {"name": raw, "exists": True, "kind": "system", "location": None}
