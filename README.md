@@ -41,7 +41,6 @@
 [오케스트레이터] ── POST /invoke {report_id, trace_id, request_id} ──▶ [Fact-Check Agent]
        │                                                                    │
        ├── GET  db/workflows/{report_id}  (리포트 구조화 JSON 조회) ◀───────┤
-       ├── POST db/workflows/{report_id}/agents/fact_check/events  ◀────────┤ (도구 호출마다 로그)
        └── POST db/{report_id}/agents/fact_check/invocations       ◀────────┘ (최종 결과 등록)
 ```
 
@@ -58,8 +57,8 @@
 ```text
 fact_check/
 ├── server.py                 # HTTP API (FastAPI) — GET /health, POST /invoke
-├── runner.py                 # Agent 오케스트레이션 (build_claim + 도구 루프 실행 + 로깅)
-├── agent.py                  # Agent 모델 + run(도구 호출 루프, 도구 시작/종료 로그) + extract_json
+├── runner.py                 # Agent 오케스트레이션 (build_claim + 도구 루프 실행)
+├── agent.py                  # Agent 모델 + run(도구 호출 루프) + extract_json
 ├── tools.py                  # 도구 4종 (symbol_lookup/git_history_query/header_lookup/function_call) + 헤더 분류
 ├── function_call_checker.py  # function_call 판단용 별도 LLM 호출(배열 1회)
 ├── prompts.py                # Fact-check Agent 시스템 프롬프트

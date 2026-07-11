@@ -184,13 +184,10 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
 
     raw_report_txt = (report.get("input") or {}).get("raw_report_txt", "") if isinstance(report.get("input"), dict) else ""
 
-    # 2) Agent 도구 호출 검증 (진행 단계는 events 로 로깅)
+    # 2) Agent 도구 호출 검증
     started = time.perf_counter()
     try:
-        fact_check_result = run_fact_check(
-            parser_result, raw_report_txt=raw_report_txt,
-            report_id=req.report_id, trace_id=req.trace_id, request_id=req.request_id,
-        )
+        fact_check_result = run_fact_check(parser_result, raw_report_txt=raw_report_txt)
     except RepoError as exc:
         raise HTTPException(status_code=500, detail=f"저장소 검증 오류: {exc}")
     except RuntimeError as exc:  # 예: UPSTAGE_API_KEY 미설정

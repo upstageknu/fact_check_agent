@@ -21,7 +21,7 @@ def main(report_id=None):
     parser_result = (report.get("agent_results") or {}).get("parser") or {}
     raw_report_txt = (report.get("input") or {}).get("raw_report_txt", "")
 
-    result = run_fact_check(parser_result, raw_report_txt=raw_report_txt, report_id=report_id)
+    result = run_fact_check(parser_result, raw_report_txt=raw_report_txt)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return result
 

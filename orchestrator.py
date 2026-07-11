@@ -2,7 +2,6 @@
 
 - fetch_workflow(report_id)   : 워크플로우 공통 JSON 조회 ("workflow" 래핑 벗김)
 - post_invocation(report_id)  : 최종 결과 등록
-- addLog(report_id, log)      : 진행 중 이벤트 로그 (설명가능 AI용, best-effort)
 
 경로:
   GET  {BASE}/upstageknu2607/db/workflows/{report_id}

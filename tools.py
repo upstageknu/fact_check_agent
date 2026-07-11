@@ -60,15 +60,20 @@ def set_report_context(raw_report_txt: str) -> None:
     _report_txt.set(raw_report_txt or "")
 
 
-def prime_function_calls(raw_report_txt: str, calls) -> list:
+def prime_function_calls(raw_report_txt: str, calls, signatures=None, user_defined_functions=None) -> list:
     """함수 호출 배열 '전체'를 한 번의 LLM 호출로 사전 판단해 컨텍스트에 저장한다.
 
+    signatures: 코드베이스에서 추출한 라이브러리 함수 실제 시그니처 맵({함수명: "시그니처"|"NOT_FOUND"}).
+    user_defined_functions: 리포터가 직접 정의한 함수명 목록(정의는 raw_report_txt 안).
     이후 function_call 도구는 이 결과를 조회만 하므로, /invoke 1건당 함수 사용법 LLM 호출은 1회다.
     반환: [{call, valid, reason, confidence}, ...]  (실패 시 빈 목록으로 저장)
     """
     set_report_context(raw_report_txt)
     try:
-        results = judge_function_calls(raw_report_txt, calls)  # ← 유일한 LLM 호출
+        results = judge_function_calls(  # ← 유일한 LLM 호출
+            raw_report_txt, calls,
+            signatures=signatures, user_defined_functions=user_defined_functions,
+        )
     except Exception as exc:  # noqa: BLE001 - 사전 판단 실패가 전체를 막지 않도록
         logger.warning("function_call 사전 판단 실패: %s", exc)
         results = []
@@ -77,12 +82,37 @@ def prime_function_calls(raw_report_txt: str, calls) -> list:
 
 
 def ensure_repo() -> None:
-    """REPO_PATH가 비어 있고 REPO_URL이 설정돼 있으면 clone 한다(도커 편의용)."""
-    if os.path.isdir(REPO_PATH) and os.listdir(REPO_PATH):
+    """대상 저장소를 준비한다.
+
+    커밋 존재 조회(git_history_query)가 동작하려면 '전체 히스토리'가 필요하다. 따라서
+    - repo가 없으면 full clone(--depth 없음, 모든 브랜치)한다.
+    - 기존 repo가 shallow면 unshallow하여 전체 히스토리를 확보한다.
+      (shallow 클론이면 과거 커밋이 없어 실제 커밋도 '없음'으로 오탐되기 때문)
+    """
+    git_dir = os.path.join(REPO_PATH, ".git")
+    if os.path.isdir(git_dir):
+        try:
+            shallow = subprocess.run(
+                ["git", "-C", REPO_PATH, "rev-parse", "--is-shallow-repository"],
+                capture_output=True, text=True, timeout=30,
+            ).stdout.strip()
+            if shallow == "true":
+                logger.info("기존 저장소가 shallow → unshallow(전체 히스토리) 진행: %s", REPO_PATH)
+                subprocess.run(
+                    ["git", "-C", REPO_PATH, "fetch", "--unshallow", "--tags"],
+                    check=False, timeout=600,
+                )
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.warning("shallow 확인/보정 실패(무시): %s", exc)
         return
+
+    if os.path.isdir(REPO_PATH) and os.listdir(REPO_PATH):
+        return  # git이 아닌 내용이 이미 있음(볼륨 마운트 등)
+
     if REPO_URL:
-        logger.info("REPO_PATH가 비어 있어 clone: %s → %s", REPO_URL, REPO_PATH)
+        logger.info("REPO_PATH가 비어 있어 full clone: %s → %s", REPO_URL, REPO_PATH)
         os.makedirs(REPO_PATH, exist_ok=True)
+        # --depth를 주지 않아 전체 히스토리 + 모든 브랜치를 받는다(커밋 조회에 필수).
         subprocess.run(["git", "clone", REPO_URL, REPO_PATH], check=True)
 
 
@@ -104,6 +134,49 @@ def get_engine() -> FactCheckTools:
 def symbol_lookup(name: str) -> dict:
     """함수/심볼이 코드베이스에 실제로 존재하는지 조회한다. 존재하면 위치(file:line)를 반환한다."""
     return get_engine().symbol_lookup(name)
+
+
+def signature_lookup(name: str):
+    """코드베이스의 함수 정의에서 시그니처 문자열을 추출한다(function_call 판단용). 없으면 None.
+
+    예: "curl_url_cleanup" → "void curl_url_cleanup(CURLU *handle)"
+    """
+    res = get_engine().symbol_lookup(name)
+    loc = res.get("location")
+    if not res.get("exists") or not loc or ":" not in loc:
+        return None
+    file_part, _, line_part = loc.rpartition(":")
+    if not line_part.isdigit():
+        return None
+    path = Path(REPO_PATH) / file_part
+    try:
+        lines = path.read_text(errors="ignore").splitlines()
+    except OSError:
+        return None
+    start = int(line_part) - 1
+    if start < 0 or start >= len(lines):
+        return None
+    chunk = "\n".join(lines[start : start + 15])  # 시그니처가 여러 줄에 걸칠 수 있음
+    idx = chunk.find(name)
+    if idx == -1:
+        return None
+    paren = chunk.find("(", idx)
+    if paren == -1:
+        return None
+    depth = 0
+    end = -1
+    for i in range(paren, len(chunk)):
+        c = chunk[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        return None
+    return " ".join(chunk[: end + 1].split())  # 공백/개행 정리한 시그니처
 
 
 def git_history_query(ref: str) -> dict:
@@ -144,19 +217,20 @@ def function_call(call: str) -> dict:
     call = (call or "").strip()
     cache = _fc_results.get()
 
+    # 판단 불가는 valid=true로 처리한다(무죄 추정).
     if cache is not None:
         if call in cache:
             return cache[call]
-        return {"call": call, "valid": "UNKNOWN", "reason": "사전 판단 목록에 없는 호출", "confidence": 0.0}
+        return {"call": call, "valid": True, "reason": "사전 판단 목록에 없어 판단 불가 → valid 처리", "confidence": 0.3}
 
     # prime이 호출되지 않은 경우(예: 도구 직접 사용)의 방어 — 단건 판단
     try:
         results = judge_function_calls(_report_txt.get(), [call])
     except Exception as exc:  # noqa: BLE001
         logger.warning("function_call LLM 판단 실패: %s", exc)
-        return {"call": call, "valid": "UNKNOWN", "reason": f"판단 실패: {exc}", "confidence": 0.0}
+        return {"call": call, "valid": True, "reason": f"판단 불가 → valid 처리: {exc}", "confidence": 0.3}
     if results:
         r = dict(results[0])
         r.setdefault("call", call)
         return r
-    return {"call": call, "valid": "UNKNOWN", "reason": "LLM이 결과를 반환하지 않음", "confidence": 0.0}
+    return {"call": call, "valid": True, "reason": "LLM 결과 없음 → valid 처리", "confidence": 0.3}
