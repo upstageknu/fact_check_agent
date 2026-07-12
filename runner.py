@@ -67,6 +67,25 @@ def _fallback_result(claim: dict, reason: str) -> dict:
     }
 
 
+def _check_commit_ref(ref: str, raw_report_txt: str = "") -> dict:
+    """cited_commits의 한 항목을 git 이력과 대조하되, parser가 잘못 넣은 '커밋이 아닌' 참조를
+    'exists=false'(가짜 커밋 인용)로 오탐하지 않도록 먼저 걸러낸다.
+
+    - URL/링크류(PR/issue 링크 등)나 공백 포함 토큰: 커밋 참조가 아니므로 검증 대상에서 제외.
+    - 원문(raw_report_txt)에 등장하지 않는 참조: parser 추출 오류/환각으로 보고 검증 대상에서 제외.
+    위 경우는 exists=None(kind로 사유 표기)으로 두어 '실재하지 않는 커밋을 인용했다'는 신호를 만들지 않는다.
+    형식이 맞고 원문에 있는 참조만 실제 git 조회한다.
+    """
+    r = (ref or "").strip()
+    if "://" in r or " " in r or "\t" in r:
+        return {"ref": ref, "exists": None, "kind": "not_a_commit_ref",
+                "reason": "커밋 해시/ref 형식이 아님(URL/링크 등) — 검증 대상 아님"}
+    if raw_report_txt and r and r not in raw_report_txt:
+        return {"ref": ref, "exists": None, "kind": "not_in_report",
+                "reason": "원문에 없는 참조(추출 오류/환각 추정) — 검증 대상 아님"}
+    return git_history_query(ref)
+
+
 def _check_library_functions(cited_library_functions) -> list:
     """cited_library_functions의 각 함수명이 실제 존재하는지 symbol_lookup으로 확인한다(결정론).
 
@@ -115,7 +134,7 @@ def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str
     # header_check / commit_check도 parser의 cited_headers / cited_commits를 기준으로 시스템이
     # 도구를 직접 호출해 채운다. LLM이 리포트에 없는 헤더/버전/커밋을 지어내는 것을 막는다.
     result["header_check"] = [header_lookup(name) for name in claim["cited_headers"]]
-    result["commit_check"] = [git_history_query(ref) for ref in claim["cited_commits"]]
+    result["commit_check"] = [_check_commit_ref(ref, raw_report_txt) for ref in claim["cited_commits"]]
 
     # poc_check도 LLM의 최종 JSON 전사에 의존하지 않고 시스템이 도구 결과로 직접 채운다.
     # 에이전트가 이미 poc_reproduce를 호출했으면 그 결과를 재사용하고,

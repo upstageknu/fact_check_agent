@@ -148,8 +148,16 @@ def ensure_repo() -> None:
                     ["git", "-C", REPO_PATH, "fetch", "--unshallow", "--tags"],
                     check=False, timeout=600,
                 )
+            else:
+                # stale clone이면 리포트가 인용한 '최신' 커밋을 놓쳐 실재 커밋을 not-found로
+                # 오탐할 수 있다. best-effort로 최신 이력을 받아둔다(오프라인이면 무시).
+                logger.info("저장소 최신화(git fetch --tags): %s", REPO_PATH)
+                subprocess.run(
+                    ["git", "-C", REPO_PATH, "fetch", "--tags", "--quiet"],
+                    check=False, timeout=300,
+                )
         except (subprocess.SubprocessError, OSError) as exc:
-            logger.warning("shallow 확인/보정 실패(무시): %s", exc)
+            logger.warning("저장소 최신화 실패(무시): %s", exc)
         return
 
     if os.path.isdir(REPO_PATH) and os.listdir(REPO_PATH):

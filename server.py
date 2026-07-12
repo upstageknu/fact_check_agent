@@ -26,7 +26,7 @@ from openai import OpenAIError
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import ORCHESTRATOR_BASE_URL, REPO_PATH, SOLAR_MODEL, UPSTAGE_API_KEY
+from config import ORCHESTRATOR_BASE_URL, REPO_PATH, SOLAR_MODEL, llm_ready
 from runner import run_fact_check
 from fact_check_tools import RepoError
 from orchestrator import fetch_workflow, invocations_url, post_invocation
@@ -139,10 +139,10 @@ def unhandled_exception_handler(request: Request, exc: Exception):
     response_model=HealthResponse,
     tags=["system"],
     summary="헬스체크",
-    description="서비스가 요청을 처리할 준비가 되었으면 `up`, 아니면(예: UPSTAGE_API_KEY 미설정) `down`.",
+    description="서비스가 요청을 처리할 준비가 되었으면 `up`, 아니면(예: LLM_API_KEY 미설정) `down`.",
 )
 def health():
-    return {"status": "ready" if UPSTAGE_API_KEY else "down"}
+    return {"status": "ready" if llm_ready() else "down"}
 
 
 @app.post(

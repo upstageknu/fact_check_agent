@@ -24,12 +24,54 @@ import re
 import shutil
 import difflib
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
 logger = logging.getLogger("fact_check_agent")
+
+_GITHUB_SLUG_RE = re.compile(r"github\.com[:/]+([^/]+)/([^/.\s]+)")
+
+
+@lru_cache(maxsize=8)
+def _remote_github_slug(repo_path: str):
+    """저장소 origin 원격이 GitHub이면 (owner, repo)를 반환한다(아니면 None)."""
+    proc = _run(["git", "remote", "get-url", "origin"], cwd=Path(repo_path))
+    if proc.returncode != 0:
+        return None
+    m = _GITHUB_SLUG_RE.search(proc.stdout.strip())
+    return (m.group(1), m.group(2)) if m else None
+
+
+@lru_cache(maxsize=2048)
+def _github_commit_exists(repo_path: str, ref: str):
+    """원격 GitHub에 해당 commit이 존재하는지 확인한다.
+
+    로컬 메인라인 clone에는 없지만(도달 불가) 원격엔 실재하는 커밋(pre-merge/PR/리베이스 전 SHA)을
+    가려내기 위한 best-effort 폴백. 반환: True(존재)/False(없음)/None(확인 불가: 네트워크/rate limit).
+    축약 SHA도 GitHub API가 해석하므로 함께 처리된다.
+    """
+    slug = _remote_github_slug(repo_path)
+    if not slug:
+        return None
+    owner, repo = slug
+    api = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
+    req = urllib.request.Request(
+        api, headers={"Accept": "application/vnd.github+json", "User-Agent": "fact-check-agent"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 422):
+            return False  # 존재하지 않는/유효하지 않은 ref
+        return None  # 403(rate limit) 등은 '확인 불가'
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        logger.warning("GitHub commit 조회 실패(무시): %s", e)
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -315,6 +357,19 @@ class GitCommitChecker:
 
         if self._exists_in_history(safe_ref):
             return CommitCheckResult(ref=ref, exists=True, reason=None)
+
+        # 폴백: 로컬 메인라인 clone엔 도달 불가능하지만 원격(GitHub)엔 실재하는 커밋
+        # (병합 전/PR/리베이스 전 SHA)을 가려낸다. 확인 불가(네트워크/rate limit)면 not-found 유지.
+        # 단, 충분히 긴 hex SHA(>=12)만 조회한다. 짧은 접두사(예: 'abc123')는 우연히 임의 커밋과
+        # 매칭돼 오탐이 나므로 제외한다(플레이스홀더/오추출 방어).
+        remote = None
+        if re.fullmatch(r"[0-9a-fA-F]{12,40}", safe_ref):
+            remote = _github_commit_exists(str(self.repo_path), safe_ref)
+        if remote is True:
+            return CommitCheckResult(
+                ref=ref, exists=True,
+                reason="로컬 메인라인 이력엔 없으나 원격 저장소에 실재하는 commit(병합 전/PR/리베이스 전 SHA)",
+            )
         return CommitCheckResult(
             ref=ref, exists=False,
             reason="저장소 git 이력에서 해당 commit을 찾을 수 없음",

@@ -13,7 +13,7 @@ import logging
 import tempfile
 from pathlib import Path
 
-from config import UPSTAGE_API_KEY, UPSTAGE_BASE_URL
+from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from poc_repro.io_utils import safe_case_id
 from poc_repro.pipeline import DEFAULT_IMAGE, run_pipeline
 
@@ -153,8 +153,9 @@ def _reproduce() -> dict:
                 clean=True,
                 with_llm=True,
                 judge_with_llm=True,
-                upstage_api_key=UPSTAGE_API_KEY,
-                upstage_base_url=UPSTAGE_BASE_URL,
+                upstage_api_key=LLM_API_KEY,
+                upstage_base_url=LLM_BASE_URL,
+                model=LLM_MODEL,
                 image=DEFAULT_IMAGE,
                 build_docker=True,
                 run_docker=True,

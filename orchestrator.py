@@ -26,15 +26,15 @@ def _base() -> str:
 
 
 def workflow_url(report_id: str) -> str:
-    return f"{_base()}/upstageknu2607/db/workflows/{report_id}"
+    return f"{_base()}/api/workflows/{report_id}"
 
 
 def invocations_url(report_id: str) -> str:
-    return f"{_base()}/upstageknu2607/db/workflows/{report_id}/agents/{AGENT}/invocations"
+    return f"{_base()}/api/workflows/{report_id}/agents/{AGENT}/invocations"
 
 
 def events_url(report_id: str) -> str:
-    return f"{_base()}/upstageknu2607/db/workflows/{report_id}/agents/{AGENT}/events"
+    return f"{_base()}/api/workflows/{report_id}/agents/{AGENT}/events"
 
 
 def fetch_workflow(report_id: str) -> dict:
