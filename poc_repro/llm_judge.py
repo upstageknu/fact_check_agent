@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .io_utils import safe_case_id, safe_json_loads
-from .llm_harness import DEFAULT_BASE_URL, DEFAULT_MODEL, resolve_api_key
+from .llm_harness import DEFAULT_BASE_URL, DEFAULT_MODEL, create_llm_client
 
 
 SYSTEM_PROMPT = """You are a defensive bug-bounty reproduction judge.
@@ -119,7 +119,7 @@ def judge_results(
     if limit is not None:
         results = results[:limit]
 
-    client = OpenAI(api_key=resolve_api_key(api_key, key_file), base_url=base_url)
+    client = create_llm_client(api_key, key_file, base_url)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with out_path.open("w", encoding="utf-8") as out:

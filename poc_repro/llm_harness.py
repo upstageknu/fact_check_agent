@@ -11,6 +11,7 @@ from .io_utils import load_jsonl, safe_case_id, safe_json_loads
 
 DEFAULT_BASE_URL = "https://api.upstage.ai/v1"
 DEFAULT_MODEL = "solar-pro3"
+DEFAULT_TIMEOUT_SECONDS = 60.0
 
 SYSTEM_PROMPT = """You are a PoC harness generation agent for defensive bug-bounty triage.
 
@@ -53,6 +54,18 @@ def resolve_api_key(api_key: str | None = None, key_file: str | Path | None = No
     if key_file:
         return Path(key_file).read_text(encoding="utf-8").strip()
     raise RuntimeError("UPSTAGE_API_KEY is required because LLM harness/judgement is enabled by default")
+
+
+def create_llm_client(api_key: str | None, key_file: str | Path | None, base_url: str):
+    from openai import OpenAI
+
+    timeout = float(os.getenv("POC_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+    return OpenAI(
+        api_key=resolve_api_key(api_key, key_file),
+        base_url=base_url,
+        timeout=timeout,
+        max_retries=1,
+    )
 
 
 def should_consider(record: dict) -> bool:
@@ -184,7 +197,7 @@ def generate_harnesses(
     except ImportError as exc:
         raise RuntimeError("Install package dependencies first: pip install -e .") from exc
 
-    client = OpenAI(api_key=resolve_api_key(api_key, key_file), base_url=base_url)
+    client = create_llm_client(api_key, key_file, base_url)
     generated = 0
     for index, record in enumerate(records, start=1):
         report_id = record["source_record"]["report_id"]
