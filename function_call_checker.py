@@ -16,6 +16,7 @@ import re
 
 from agent import extract_json
 from config import SOLAR_MODEL, get_client
+from token_usage import add_response_usage
 
 logger = logging.getLogger("function_call_checker")
 
@@ -305,6 +306,7 @@ def judge_function_calls(raw_report_txt: str, calls, signatures=None, user_defin
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     )
+    add_response_usage(response)
     data = extract_json(response.choices[0].message.content)
     items = _coerce_valid_bool(data.get("function_call_check", []))
     # call 문자열은 리포터 원문을 그대로 보존한다. LLM이 이스케이프 등을 정규화해 바꿔 써도,

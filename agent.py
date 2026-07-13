@@ -11,6 +11,7 @@ import json
 from pydantic import BaseModel
 
 from config import SOLAR_MODEL, get_client
+from token_usage import add_response_usage
 
 MAX_STEPS = 24
 
@@ -72,6 +73,7 @@ def run(messages, agent, max_steps=MAX_STEPS):
             kwargs["tools"] = tool_schemas
             kwargs["tool_choice"] = "auto"
         response = client.chat.completions.create(**kwargs)
+        add_response_usage(response)
         message = response.choices[0].message
 
         # 도구 호출이 없으면 최종 답변
@@ -105,4 +107,5 @@ def run(messages, agent, max_steps=MAX_STEPS):
         model=agent.model,
         messages=[{"role": "system", "content": agent.instructions}] + messages,
     )
+    add_response_usage(response)
     return response.choices[0].message.content
