@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable
 
 from .extract_candidates import extract_candidates
 from .llm_judge import judge_results
@@ -15,6 +18,29 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 DOCKER_CONTEXT = PACKAGE_DIR / "docker"
 TESTCASE_DIR = PACKAGE_DIR / "testcases"
 DEFAULT_IMAGE = "bugbounty-poc-repro"
+
+
+@contextmanager
+def pipeline_stage(name: str, callback: Callable | None):
+    started = time.perf_counter()
+    if callback:
+        callback("started", name, {"stage": name})
+    try:
+        yield
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if callback:
+            callback("failed", name, {
+                "stage": name,
+                "duration_ms": duration_ms,
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:500],
+            })
+        raise
+    else:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if callback:
+            callback("completed", name, {"stage": name, "duration_ms": duration_ms})
 
 
 def display_command(command: list[str]) -> str:
@@ -167,6 +193,7 @@ def run_pipeline(
     memory: str = "512m",
     cpus: str = "1",
     dry_run: bool = False,
+    event_callback: Callable | None = None,
 ) -> PipelineResult:
     if testcase is not None and parsed_jsonl is not None:
         raise ValueError("Use either testcase or parsed_jsonl, not both.")
@@ -189,97 +216,102 @@ def run_pipeline(
 
     print("[1/5] extract PoC candidates and reporter claims", flush=True)
     manifest = None
-    if dry_run:
-        print(f"dry_run: would read {parsed_path}")
-        print(f"dry_run: would write {cases_dir}")
-    else:
-        manifest = extract_candidates(parsed_path, cases_dir, clean=clean)
-        print(
-            f"candidate_count={manifest['candidate_count']} "
-            f"runnable_count={manifest['runnable_count']} "
-            f"manual_count={manifest['manual_count']}",
-            flush=True,
-        )
+    with pipeline_stage("candidate_extraction", event_callback):
+        if dry_run:
+            print(f"dry_run: would read {parsed_path}")
+            print(f"dry_run: would write {cases_dir}")
+        else:
+            manifest = extract_candidates(parsed_path, cases_dir, clean=clean)
+            print(
+                f"candidate_count={manifest['candidate_count']} "
+                f"runnable_count={manifest['runnable_count']} "
+                f"manual_count={manifest['manual_count']}",
+                flush=True,
+            )
 
     print("[2/5] LLM harness generation", flush=True)
     llm_selected_count = 0
-    if with_llm:
-        records = select_records(
-            parsed_path=parsed_path,
-            cases_dir=cases_dir,
-            report_ids=set(report_id_list),
-            limit=llm_limit,
-            generate=True,
-            force=force_llm,
-        )
-        llm_selected_count = len(records)
-        print(f"selected_for_llm {llm_selected_count}")
-        print_selected(records, cases_dir)
-        if dry_run:
-            print("dry_run: would call LLM and write llm/harness.json")
-        else:
-            generate_harnesses(
-                records,
-                cases_dir,
-                api_key=upstage_api_key,
-                key_file=key_file,
-                base_url=upstage_base_url,
-                model=model,
-                sleep_seconds=llm_sleep,
+    with pipeline_stage("harness_generation", event_callback):
+        if with_llm:
+            records = select_records(
+                parsed_path=parsed_path,
+                cases_dir=cases_dir,
+                report_ids=set(report_id_list),
+                limit=llm_limit,
+                generate=True,
+                force=force_llm,
             )
-    else:
-        print("skipped: with_llm=False")
+            llm_selected_count = len(records)
+            print(f"selected_for_llm {llm_selected_count}")
+            print_selected(records, cases_dir)
+            if dry_run:
+                print("dry_run: would call LLM and write llm/harness.json")
+            else:
+                generate_harnesses(
+                    records,
+                    cases_dir,
+                    api_key=upstage_api_key,
+                    key_file=key_file,
+                    base_url=upstage_base_url,
+                    model=model,
+                    sleep_seconds=llm_sleep,
+                )
+        else:
+            print("skipped: with_llm=False")
 
     print("[3/5] docker build", flush=True)
     docker_built = False
-    if build_docker:
-        docker_built = ensure_docker_image(image, no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run)
-    else:
-        print("skipped: build_docker=False")
+    with pipeline_stage("docker_build", event_callback):
+        if build_docker:
+            docker_built = ensure_docker_image(image, no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run)
+        else:
+            print("skipped: build_docker=False")
 
     print("[4/5] docker run", flush=True)
     docker_ran = False
-    if run_docker:
-        docker_ran = run_docker_cases(
-            image=image,
-            cases_dir=cases_dir,
-            results_dir=results_dir,
-            report_ids=report_id_list,
-            timeout=timeout,
-            allow_shell=allow_shell,
-            memory=memory,
-            cpus=cpus,
-            dry_run=dry_run,
-        )
-    else:
-        print("skipped: run_docker=False")
+    with pipeline_stage("docker_run", event_callback):
+        if run_docker:
+            docker_ran = run_docker_cases(
+                image=image,
+                cases_dir=cases_dir,
+                results_dir=results_dir,
+                report_ids=report_id_list,
+                timeout=timeout,
+                allow_shell=allow_shell,
+                memory=memory,
+                cpus=cpus,
+                dry_run=dry_run,
+            )
+        else:
+            print("skipped: run_docker=False")
 
     print("[5/5] LLM claim/result judgement", flush=True)
     results_path = results_dir / "results.jsonl"
     judgement_path = results_dir / "judgements.jsonl"
     llm_judgement_count = 0
-    if judge_with_llm:
-        if dry_run:
-            print(f"dry_run: would compare {results_path} with cases/*/claim.json")
-            print(f"dry_run: would write {judgement_path}")
-        elif not results_path.exists():
-            print(f"skipped: judge_with_llm=True but results file is missing: {results_path}")
+    with pipeline_stage("result_judgement", event_callback):
+        if judge_with_llm:
+            if dry_run:
+                print(f"dry_run: would compare {results_path} with cases/*/claim.json")
+                print(f"dry_run: would write {judgement_path}")
+            elif not results_path.exists():
+                print(f"skipped: judge_with_llm=True but results file is missing: {results_path}")
+            else:
+                llm_judgement_count = judge_results(
+                    results_path=results_path,
+                    cases_dir=cases_dir,
+                    out_path=judgement_path,
+                    api_key=upstage_api_key,
+                    key_file=key_file,
+                    base_url=upstage_base_url,
+                    model=model,
+                    report_ids=report_id_list,
+                    limit=judge_limit,
+                    sleep_seconds=judge_sleep,
+                )
+                print(f"judgement_count={llm_judgement_count}", flush=True)
         else:
-            llm_judgement_count = judge_results(
-                results_path=results_path,
-                cases_dir=cases_dir,
-                out_path=judgement_path,
-                api_key=upstage_api_key,
-                key_file=key_file,
-                base_url=upstage_base_url,
-                model=model,
-                report_ids=report_id_list,
-                limit=judge_limit,
-                sleep_seconds=judge_sleep,
-            )
-            print(f"judgement_count={llm_judgement_count}", flush=True)
-    else:
-        print("skipped: judge_with_llm=False")
+            print("skipped: judge_with_llm=False")
 
     print("done", flush=True)
     return PipelineResult(

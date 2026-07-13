@@ -10,6 +10,7 @@
 """
 
 import logging
+import os
 
 import httpx
 
@@ -18,6 +19,7 @@ from config import ORCHESTRATOR_BASE_URL
 logger = logging.getLogger("fact_check_orchestrator")
 
 TIMEOUT = 30.0
+EVENT_TIMEOUT = float(os.getenv("WORKFLOW_EVENT_TIMEOUT_SECONDS", "2"))
 AGENT = "fact_check"
 
 
@@ -89,7 +91,7 @@ def addLog(
     }
     url = events_url(report_id)
     try:
-        with httpx.Client(timeout=TIMEOUT) as client:
+        with httpx.Client(timeout=EVENT_TIMEOUT) as client:
             resp = client.post(url, json=body)
         resp.raise_for_status()
         return True

@@ -14,10 +14,21 @@ import tempfile
 from pathlib import Path
 
 from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from event_logger import emit_event
 from poc_repro.io_utils import safe_case_id
 from poc_repro.pipeline import DEFAULT_IMAGE, run_pipeline
 
 logger = logging.getLogger("fact_check_poc_tool")
+
+
+def _poc_event_callback(status: str, stage: str, payload: dict) -> None:
+    level = "ERROR" if status == "failed" else "INFO"
+    emit_event(
+        f"fact_check.poc.stage.{status}",
+        f"PoC {stage} {status}",
+        payload=payload,
+        level=level,
+    )
 
 
 def load_result_lines(path: Path) -> list:
@@ -159,6 +170,7 @@ def _reproduce() -> dict:
                 image=DEFAULT_IMAGE,
                 build_docker=True,
                 run_docker=True,
+                event_callback=_poc_event_callback,
             )
             return _summarize(report_id, result, result.results_dir)
     except Exception as exc:  # noqa: BLE001 - 재현 실패가 fact_check 전체를 막지 않도록
