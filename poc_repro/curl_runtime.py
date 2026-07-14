@@ -60,7 +60,7 @@ def versioned_image_name(image_prefix: str, version: str) -> str:
 
 def git_tag_exists(repo_path: Path, tag: str) -> bool:
     completed = subprocess.run(
-        ["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}"],
+        ["git", "-c", f"safe.directory={repo_path}", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}"],
         text=True,
         capture_output=True,
         check=False,
@@ -92,7 +92,7 @@ def prepare_build_context(repo_path: Path, tag: str, context_dir: Path, docker_d
     source_dir.mkdir(parents=True)
     archive_path = context_dir / "curl-source.tar"
     subprocess.run(
-        ["git", "-C", str(repo_path), "archive", "--format=tar", f"--output={archive_path}", tag],
+        ["git", "-c", f"safe.directory={repo_path}", "-C", str(repo_path), "archive", "--format=tar", f"--output={archive_path}", tag],
         check=True,
     )
     with tarfile.open(archive_path) as archive:
