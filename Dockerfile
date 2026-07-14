@@ -3,8 +3,10 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# 결정론적 검증 엔진에 필요한 시스템 도구: git(커밋/이력 조회), universal-ctags(심볼 인덱싱)
+# 결정론적 검증 엔진과 호스트 Docker 데몬을 통한 격리 PoC 실행에 필요한 도구.
+# 이 이미지에서 Docker 데몬을 띄우지 않고 런타임에 마운트한 docker.sock만 사용한다.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    docker-cli \
     git \
     universal-ctags \
     && rm -rf /var/lib/apt/lists/*

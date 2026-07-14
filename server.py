@@ -29,7 +29,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from config import ORCHESTRATOR_BASE_URL, REPO_PATH, SOLAR_MODEL, llm_ready
 from runner import run_fact_check
 from fact_check_tools import RepoError
+from event_logger import configure_events, emit_event, timed_stage
 from orchestrator import fetch_workflow, invocations_url, post_invocation
+from token_usage import get_usage, reset_usage
 from tools import get_engine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -164,6 +166,18 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
     if not req.report_id:
         raise HTTPException(status_code=400, detail="report_id가 비어 있습니다.")
 
+    reset_usage()
+    configure_events(
+        report_id=req.report_id,
+        agent_job_id=req.agent_job_id,
+        trace_id=req.trace_id,
+        request_id=req.request_id,
+    )
+    emit_event(
+        "fact_check.started",
+        "fact_check invocation started",
+        payload={"agent_job_id": req.agent_job_id},
+    )
     # 1) 워크플로우 조회
     try:
         report = fetch_workflow(req.report_id)
@@ -187,11 +201,12 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
     # 2) Agent 도구 호출 검증
     started = time.perf_counter()
     try:
-        fact_check_result = run_fact_check(
-            parser_result,
-            raw_report_txt=raw_report_txt,
-            report_id=report.get("report_id") or req.report_id,
-        )
+        with timed_stage("fact_check_pipeline"):
+            fact_check_result = run_fact_check(
+                parser_result,
+                raw_report_txt=raw_report_txt,
+                report_id=report.get("report_id") or req.report_id,
+            )
     except RepoError as exc:
         raise HTTPException(status_code=500, detail=f"저장소 검증 오류: {exc}")
     except RuntimeError as exc:  # 예: UPSTAGE_API_KEY 미설정
@@ -199,6 +214,12 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
     except OpenAIError as exc:  # 예: 잘못된 API 키, 모델명 오류, 레이트리밋 등
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {exc}")
     duration_ms = int((time.perf_counter() - started) * 1000)
+    token_usage = get_usage()
+    emit_event(
+        "fact_check.completed",
+        f"fact_check invocation completed in {duration_ms}ms",
+        payload={"duration_ms": duration_ms, "token_usage": token_usage},
+    )
 
     output = {
         "report_id": report.get("report_id") or req.report_id,
@@ -208,12 +229,12 @@ def invoke(req: InvokeRequest, rounds: int = Query(0, include_in_schema=False)):
     }
 
     # 4) 최종 결과 DB 등록 (best-effort)
-    _register_invocation(report, req, output, duration_ms)
+    _register_invocation(report, req, output, duration_ms, token_usage)
 
-    return {"status_code": 200, "message": "fact_check completed", "output": output}
+    return {"status_code": 200, "message": "fact_check completed", "output": output, "token_usage": token_usage}
 
 
-def _register_invocation(report: dict, req: InvokeRequest, output: dict, duration_ms: int) -> None:
+def _register_invocation(report: dict, req: InvokeRequest, output: dict, duration_ms: int, token_usage: dict) -> None:
     """최종 결과를 오케스트레이터 invocations 엔드포인트로 POST한다(실패해도 응답은 정상)."""
     report_id = report.get("report_id") or req.report_id
     payload = {
@@ -243,6 +264,7 @@ def _register_invocation(report: dict, req: InvokeRequest, output: dict, duratio
         "duration_ms": duration_ms,
         "model": SOLAR_MODEL,
         "prompt_version": PROMPT_VERSION,
+        "token_usage": token_usage,
         "workflow_status": report.get("workflow_status") or "",
     }
     try:

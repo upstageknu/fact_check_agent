@@ -9,6 +9,7 @@ import logging
 
 from agent import Agent, extract_json, run
 from config import SOLAR_MODEL
+from event_logger import timed_stage
 from orchestrator import addLog
 from poc_tool import get_poc_result, poc_reproduce, prime_poc_context
 from prompts import FACT_CHECK_AGENT_PROMPT
@@ -100,32 +101,39 @@ def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str
     raw_report_txt(보고서 원문)는 function_call 도구가 참조하는 별도 LLM 판단의 입력으로 쓰인다.
     report_id는 poc_reproduce 도구가 PoC를 재현할 때 case 식별자로 사용한다.
     """
-    get_engine()  # 저장소 인덱스 준비(최초 1회)
-    prime_poc_context(report_id, parser_result, raw_report_txt)  # PoC 재현 도구 입력 주입
-    claim = build_claim(parser_result)
+    with timed_stage("repository_index"):
+        get_engine()  # 저장소 인덱스 준비(최초 1회)
+    with timed_stage("claim_preparation"):
+        prime_poc_context(report_id, parser_result, raw_report_txt)
+        claim = build_claim(parser_result)
 
     # 함수 호출 배열 '전체'를 한 번의 LLM 호출로 사전 판단(이후 function_call 도구는 조회만).
     # 라이브러리 함수의 '실제 시그니처'를 코드베이스에서 추출해 판단 근거로 함께 제공한다.
-    known_signatures = {
-        fn: (signature_lookup(fn) or "NOT_FOUND") for fn in claim["cited_library_functions"]
-    }
-    prime_function_calls(
-        raw_report_txt, claim["function_calls"],
-        signatures=known_signatures,
-        user_defined_functions=claim["cited_user_defined_functions"],
-    )
+    with timed_stage("signature_lookup", payload={"item_count": len(claim["cited_library_functions"])}):
+        known_signatures = {
+            fn: (signature_lookup(fn) or "NOT_FOUND") for fn in claim["cited_library_functions"]
+        }
+    with timed_stage("function_call_precheck", payload={"item_count": len(claim["function_calls"])}):
+        prime_function_calls(
+            raw_report_txt, claim["function_calls"],
+            signatures=known_signatures,
+            user_defined_functions=claim["cited_user_defined_functions"],
+        )
 
     messages = [{"role": "user", "content": json.dumps(claim, ensure_ascii=False, indent=2)}]
-    final = run(messages, fact_check_agent)
+    with timed_stage("llm_tool_loop"):
+        final = run(messages, fact_check_agent)
 
-    try:
-        result = extract_json(final)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("최종 응답 JSON 파싱 실패: %s | raw[:200]=%r", exc, (final or "")[:200])
-        result = _fallback_result(claim, str(exc))
+    with timed_stage("result_parse"):
+        try:
+            result = extract_json(final)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("최종 응답 JSON 파싱 실패: %s | raw[:200]=%r", exc, (final or "")[:200])
+            result = _fallback_result(claim, str(exc))
 
     # 라이브러리 함수 존재 여부는 시스템이 symbol_lookup으로 결정론적으로 채운다(LLM 출력에 의존하지 않음).
-    result["library_function_check"] = _check_library_functions(claim["cited_library_functions"])
+    with timed_stage("library_function_check", payload={"item_count": len(claim["cited_library_functions"])}):
+        result["library_function_check"] = _check_library_functions(claim["cited_library_functions"])
 
     # function_call_check도 prime_function_calls가 사전 판단한 결과로 시스템이 직접 채운다.
     # 이렇게 하면 LLM이 프롬프트 예시를 베끼거나 리포트에 없는 호출을 지어내는 일이 없다.
@@ -133,15 +141,18 @@ def run_fact_check(parser_result: dict, raw_report_txt: str = "", report_id: str
 
     # header_check / commit_check도 parser의 cited_headers / cited_commits를 기준으로 시스템이
     # 도구를 직접 호출해 채운다. LLM이 리포트에 없는 헤더/버전/커밋을 지어내는 것을 막는다.
-    result["header_check"] = [header_lookup(name) for name in claim["cited_headers"]]
-    result["commit_check"] = [_check_commit_ref(ref, raw_report_txt) for ref in claim["cited_commits"]]
+    with timed_stage("header_check", payload={"item_count": len(claim["cited_headers"])}):
+        result["header_check"] = [header_lookup(name) for name in claim["cited_headers"]]
+    with timed_stage("commit_check", payload={"item_count": len(claim["cited_commits"])}):
+        result["commit_check"] = [_check_commit_ref(ref, raw_report_txt) for ref in claim["cited_commits"]]
 
     # poc_check도 LLM의 최종 JSON 전사에 의존하지 않고 시스템이 도구 결과로 직접 채운다.
     # 에이전트가 이미 poc_reproduce를 호출했으면 그 결과를 재사용하고,
     # PoC가 있는데도 호출하지 않았으면 여기서 한 번 결정론적으로 실행한다.
     poc_result = get_poc_result()
     if poc_result is None and (claim.get("poc_present") or claim.get("poc_code")):
-        poc_result = poc_reproduce()
+        with timed_stage("poc_reproduction"):
+            poc_result = poc_reproduce()
     if poc_result is not None:
         result["poc_check"] = poc_result
     else:

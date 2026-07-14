@@ -7,12 +7,16 @@ Solar Pro 3가 tool을 하나씩 호출하며 검증을 진행한다:
 
 import inspect
 import json
+import logging
 
 from pydantic import BaseModel
 
 from config import SOLAR_MODEL, get_client
+from event_logger import timed_stage
+from token_usage import add_response_usage
 
 MAX_STEPS = 24
+logger = logging.getLogger("fact_check_agent")
 
 
 class Agent(BaseModel):
@@ -57,6 +61,79 @@ def extract_json(text: str) -> dict:
     return json.loads(text)
 
 
+def execute_tool_call(name: str, fn, raw_arguments: str | None) -> tuple[dict, dict]:
+    """Validate and execute one LLM tool call without aborting the Agent loop.
+
+    Models can violate the advertised JSON schema by omitting a required
+    argument, adding an unknown argument, or emitting malformed JSON. Return
+    those model errors as tool results so they cannot turn fact-check into 500.
+    """
+    try:
+        args = json.loads(raw_arguments or "{}")
+    except (json.JSONDecodeError, TypeError) as exc:
+        return {}, {
+            "error": {
+                "type": "invalid_tool_arguments",
+                "tool": name,
+                "message": f"tool arguments are not valid JSON: {exc}",
+            },
+            "retryable": True,
+        }
+
+    if not isinstance(args, dict):
+        return {}, {
+            "error": {
+                "type": "invalid_tool_arguments",
+                "tool": name,
+                "message": "tool arguments must be a JSON object",
+            },
+            "retryable": True,
+        }
+
+    if fn is None:
+        return args, {
+            "error": {
+                "type": "unknown_tool",
+                "tool": name,
+                "message": f"unknown tool: {name}",
+            },
+            "retryable": False,
+        }
+
+    try:
+        inspect.signature(fn).bind(**args)
+    except TypeError as exc:
+        required = [
+            parameter.name
+            for parameter in inspect.signature(fn).parameters.values()
+            if parameter.default is inspect._empty
+        ]
+        return args, {
+            "error": {
+                "type": "invalid_tool_arguments",
+                "tool": name,
+                "message": str(exc),
+                "required": required,
+                "received": sorted(args),
+            },
+            "retryable": True,
+            "instruction": "Call the tool again with all required arguments.",
+        }
+
+    try:
+        return args, fn(**args)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("tool execution failed: %s", name)
+        return args, {
+            "error": {
+                "type": "tool_execution_error",
+                "tool": name,
+                "message": str(exc),
+            },
+            "retryable": False,
+        }
+
+
 def run(messages, agent, max_steps=MAX_STEPS):
     """도구 호출 루프를 돌려 최종 응답 문자열을 반환한다."""
     client = get_client()
@@ -71,7 +148,9 @@ def run(messages, agent, max_steps=MAX_STEPS):
         if tool_schemas:
             kwargs["tools"] = tool_schemas
             kwargs["tool_choice"] = "auto"
-        response = client.chat.completions.create(**kwargs)
+        with timed_stage("llm_tool_call", payload={"agent": agent.name, "step": _ + 1}):
+            response = client.chat.completions.create(**kwargs)
+        add_response_usage(response)
         message = response.choices[0].message
 
         # 도구 호출이 없으면 최종 답변
@@ -84,14 +163,12 @@ def run(messages, agent, max_steps=MAX_STEPS):
 
         for tool_call in message.tool_calls:
             name = tool_call.function.name
-            try:
-                args = json.loads(tool_call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
             fn = tool_map.get(name)
+            with timed_stage("tool_execution", payload={"tool_name": name, "step": _ + 1}):
+                args, result = execute_tool_call(
+                    name, fn, tool_call.function.arguments
+                )
             print(f"  \U0001F527 [{agent.name}] {name}({args})")
-
-            result = fn(**args) if fn else {"error": f"unknown tool: {name}"}
 
             messages.append({
                 "role": "tool",
@@ -101,8 +178,10 @@ def run(messages, agent, max_steps=MAX_STEPS):
 
     # 도구 루프가 한도에 도달하면, 도구 없이 최종 JSON만 요청한다.
     messages.append({"role": "user", "content": "이제 도구를 더 호출하지 말고 지금까지의 도구 결과만으로 최종 JSON만 출력하라."})
-    response = client.chat.completions.create(
-        model=agent.model,
-        messages=[{"role": "system", "content": agent.instructions}] + messages,
-    )
+    with timed_stage("llm_final_response", payload={"agent": agent.name, "max_steps_reached": True}):
+        response = client.chat.completions.create(
+            model=agent.model,
+            messages=[{"role": "system", "content": agent.instructions}] + messages,
+        )
+    add_response_usage(response)
     return response.choices[0].message.content

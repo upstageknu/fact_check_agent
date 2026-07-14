@@ -10,14 +10,27 @@ function_call 도구와 동일하게, 요청별 입력(report_id/parser/원문)�
 import contextvars
 import json
 import logging
+import os
+import re
 import tempfile
 from pathlib import Path
 
 from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from event_logger import emit_event
 from poc_repro.io_utils import safe_case_id
 from poc_repro.pipeline import DEFAULT_IMAGE, run_pipeline
 
 logger = logging.getLogger("fact_check_poc_tool")
+
+
+def _poc_event_callback(status: str, stage: str, payload: dict) -> None:
+    level = "ERROR" if status == "failed" else "INFO"
+    emit_event(
+        f"fact_check.poc.stage.{status}",
+        f"PoC {stage} {status}",
+        payload=payload,
+        level=level,
+    )
 
 
 def load_result_lines(path: Path) -> list:
@@ -54,7 +67,13 @@ def get_poc_result():
 
 def _build_record(ctx: dict) -> dict:
     """poc_repro가 기대하는 parsed_reports.jsonl 한 줄({source_record, parser})을 만든다."""
-    parser = ctx["parser"]
+    parser = dict(ctx["parser"])
+    raw_report_txt = ctx.get("raw_report_txt") or ""
+    affected_version = parser.get("affected_version")
+    parsed_versions = re.findall(r"(?<![0-9.])(\d+\.\d+\.\d+)(?![0-9.])", str(affected_version or ""))
+    if raw_report_txt and parsed_versions and not all(version in raw_report_txt for version in parsed_versions):
+        logger.warning("parser affected_version ignored because it is absent from raw report: %r", affected_version)
+        parser["affected_version"] = None
     return {
         "source_record": {
             "report_id": ctx["report_id"],
@@ -112,6 +131,7 @@ def _summarize(report_id: str, result, results_dir: Path) -> dict:
         "run_stderr_tail": ((runs[-1].get("stderr") or "")[-1500:]) if runs else None,
         "judgement": (judge_rec or {}).get("match"),
         "judgement_summary": (judge_rec or {}).get("observation_summary"),
+        "reproduction_environment": run_rec.get("reproduction_environment"),
     }
 
 
@@ -141,7 +161,13 @@ def _reproduce() -> dict:
     report_id = ctx["report_id"]
 
     try:
-        with tempfile.TemporaryDirectory(prefix="poc_repro_") as tmp:
+        work_root = os.getenv("POC_WORK_ROOT")
+        if work_root:
+            Path(work_root).mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="poc_repro_",
+            dir=work_root or None,
+        ) as tmp:
             work_dir = Path(tmp)
             parsed_jsonl = work_dir / "parsed_reports.jsonl"
             parsed_jsonl.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -157,8 +183,10 @@ def _reproduce() -> dict:
                 upstage_base_url=LLM_BASE_URL,
                 model=LLM_MODEL,
                 image=DEFAULT_IMAGE,
+                curl_repo_path=os.getenv("REPO_PATH", "/repo"),
                 build_docker=True,
                 run_docker=True,
+                event_callback=_poc_event_callback,
             )
             return _summarize(report_id, result, result.results_dir)
     except Exception as exc:  # noqa: BLE001 - 재현 실패가 fact_check 전체를 막지 않도록
