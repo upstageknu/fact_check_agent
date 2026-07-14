@@ -11,6 +11,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -66,7 +67,13 @@ def get_poc_result():
 
 def _build_record(ctx: dict) -> dict:
     """poc_repro가 기대하는 parsed_reports.jsonl 한 줄({source_record, parser})을 만든다."""
-    parser = ctx["parser"]
+    parser = dict(ctx["parser"])
+    raw_report_txt = ctx.get("raw_report_txt") or ""
+    affected_version = parser.get("affected_version")
+    parsed_versions = re.findall(r"(?<![0-9.])(\d+\.\d+\.\d+)(?![0-9.])", str(affected_version or ""))
+    if raw_report_txt and parsed_versions and not all(version in raw_report_txt for version in parsed_versions):
+        logger.warning("parser affected_version ignored because it is absent from raw report: %r", affected_version)
+        parser["affected_version"] = None
     return {
         "source_record": {
             "report_id": ctx["report_id"],
@@ -124,6 +131,7 @@ def _summarize(report_id: str, result, results_dir: Path) -> dict:
         "run_stderr_tail": ((runs[-1].get("stderr") or "")[-1500:]) if runs else None,
         "judgement": (judge_rec or {}).get("match"),
         "judgement_summary": (judge_rec or {}).get("observation_summary"),
+        "reproduction_environment": run_rec.get("reproduction_environment"),
     }
 
 
@@ -175,6 +183,7 @@ def _reproduce() -> dict:
                 upstage_base_url=LLM_BASE_URL,
                 model=LLM_MODEL,
                 image=DEFAULT_IMAGE,
+                curl_repo_path=os.getenv("REPO_PATH", "/repo"),
                 build_docker=True,
                 run_docker=True,
                 event_callback=_poc_event_callback,

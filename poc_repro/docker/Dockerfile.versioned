@@ -1,0 +1,33 @@
+FROM debian:bookworm-slim AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      autoconf automake build-essential ca-certificates libssl-dev libtool pkg-config zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY curl-src /src/curl
+WORKDIR /src/curl
+RUN autoreconf -fi \
+    && ./configure --prefix=/usr/local --with-openssl --enable-shared --disable-static \
+    && make -j2 \
+    && make install
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/lib
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates coreutils file jq libssl3 python3 strace time zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local /usr/local
+RUN ldconfig
+
+WORKDIR /workspace
+COPY runner.py /runner.py
+ENTRYPOINT ["python3", "/runner.py"]

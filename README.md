@@ -46,6 +46,13 @@ compact dict로 요약합니다.
   `judgement`만 `poc_repro` 내부의 제약된 단일 judge LLM 호출 결과입니다.
 - **Docker 데몬이 필요**하며, 재현 불가(Docker 미실행 등) 시 `verdict=NOT_EXECUTED`로 무죄추정 처리합니다.
 - curl scope gate가 대상(`curl_cli`/`libcurl`)이 아닌 PoC는 실행 전 `OUT_OF_SCOPE_REJECT`로 반려합니다.
+- 사용자 원문에 있는 정확한 `affected_version=X.Y.Z`와 로컬 `REPO_PATH`의
+  `curl-X_Y_Z` tag가 일치하면 curl CLI/libcurl을 함께 빌드한 버전 이미지를 재사용합니다.
+  범위·복수 버전·없는 tag는 임의 대체하지 않고 `ENVIRONMENT_UNAVAILABLE`로 보류합니다.
+- 실행 직전 `curl --version`과 `curl-config --version`을 모두 확인하며 요청/실제 버전과
+  `match_status`는 `poc_check.reproduction_environment`에 기록됩니다.
+- PoC 컨테이너는 network 차단 외에도 capability 제거, `no-new-privileges`, read-only rootfs,
+  PID/메모리/CPU 제한을 적용합니다.
 
 ### 헤더 검증 분류 (`header_lookup`)
 

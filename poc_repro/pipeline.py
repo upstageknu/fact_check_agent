@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -8,7 +9,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
+from .curl_runtime import CurlRuntime, prepare_build_context, resolve_curl_runtime
 from .extract_candidates import extract_candidates
+from .io_utils import load_jsonl, safe_case_id
 from .llm_judge import judge_results
 from .llm_harness import DEFAULT_MODEL, generate_harnesses, print_selected, select_records
 from .models import PipelineResult
@@ -22,6 +25,7 @@ DEFAULT_IMAGE = "bugbounty-poc-repro"
 
 @contextmanager
 def pipeline_stage(name: str, callback: Callable | None):
+    """Emit best-effort timing events around one pipeline stage."""
     started = time.perf_counter()
     if callback:
         callback("started", name, {"stage": name})
@@ -121,6 +125,53 @@ def ensure_docker_image(image: str, no_cache: bool, rebuild: bool, dry_run: bool
     return build_docker_image(image, no_cache=no_cache, dry_run=dry_run)
 
 
+def select_curl_runtime(parsed_path: Path, report_ids: list[str], repo_path: str | Path | None, image_prefix: str) -> tuple[CurlRuntime, list[str]]:
+    selected = set(report_ids)
+    records = [record for record in load_jsonl(parsed_path) if not selected or record["source_record"]["report_id"] in selected]
+    selected_ids = [record["source_record"]["report_id"] for record in records]
+    version_values = list(dict.fromkeys(
+        str(record.get("parser", {}).get("affected_version") or "").strip()
+        for record in records
+    ))
+    versions = [version for version in version_values if version]
+    if len(version_values) > 1:
+        return CurlRuntime(
+            requested_value=", ".join(versions), requested_curl_version=None,
+            requested_libcurl_version=None, resolved_git_tag=None, image=None,
+            match_status="MULTIPLE_VERSION_REQUIREMENTS", allow_execution=False,
+        ), selected_ids
+    return resolve_curl_runtime(versions[0] if versions else None, repo_path, image_prefix), selected_ids
+
+
+def write_runtime_metadata(cases_dir: Path, report_ids: list[str], runtime: CurlRuntime) -> None:
+    payload = runtime.as_dict()
+    for report_id in report_ids:
+        case_dir = cases_dir / safe_case_id(report_id)
+        if case_dir.exists():
+            (case_dir / "reproduction_environment.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+
+
+def ensure_versioned_image(runtime: CurlRuntime, repo_path: Path, work_path: Path, no_cache: bool, rebuild: bool, dry_run: bool) -> bool:
+    if not runtime.image or not runtime.resolved_git_tag:
+        raise ValueError("versioned image requires an exact curl runtime")
+    if dry_run:
+        print(f"dry_run: would build/reuse {runtime.image} from {runtime.resolved_git_tag}")
+        return False
+    if not rebuild and not no_cache and docker_image_exists(runtime.image):
+        print(f"reusing version-matched Docker image: {runtime.image}", flush=True)
+        return False
+    context_dir = work_path / "curl-image-context"
+    prepare_build_context(repo_path, runtime.resolved_git_tag, context_dir, DOCKER_CONTEXT)
+    command = ["docker", "build", "-t", runtime.image]
+    if no_cache:
+        command.append("--no-cache")
+    command.append(str(context_dir))
+    run_command(command, cwd=context_dir, dry_run=False)
+    return True
+
+
 def run_docker_cases(
     image: str,
     cases_dir: Path,
@@ -139,6 +190,15 @@ def run_docker_cases(
         "docker",
         "run",
         "--rm",
+        "--pids-limit",
+        "128",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
         "--network",
         "none",
         "--memory",
@@ -184,6 +244,7 @@ def run_pipeline(
     upstage_base_url: str = "https://api.upstage.ai/v1",
     model: str = DEFAULT_MODEL,
     image: str = DEFAULT_IMAGE,
+    curl_repo_path: str | Path | None = None,
     build_docker: bool = True,
     rebuild_image: bool = False,
     no_cache: bool = False,
@@ -213,6 +274,9 @@ def run_pipeline(
     cases_dir = work_path / "cases"
     results_dir = work_path / "results"
     report_id_list = report_ids or []
+    resolved_repo_path = curl_repo_path or os.getenv("POC_CURL_REPO_PATH")
+    curl_runtime, runtime_report_ids = select_curl_runtime(parsed_path, report_id_list, resolved_repo_path, image)
+    effective_image = curl_runtime.image or image
 
     print("[1/5] extract PoC candidates and reporter claims", flush=True)
     manifest = None
@@ -228,6 +292,7 @@ def run_pipeline(
                 f"manual_count={manifest['manual_count']}",
                 flush=True,
             )
+            write_runtime_metadata(cases_dir, runtime_report_ids, curl_runtime)
 
     print("[2/5] LLM harness generation", flush=True)
     llm_selected_count = 0
@@ -263,7 +328,13 @@ def run_pipeline(
     docker_built = False
     with pipeline_stage("docker_build", event_callback):
         if build_docker:
-            docker_built = ensure_docker_image(image, no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run)
+            if curl_runtime.match_status == "EXACT":
+                docker_built = ensure_versioned_image(
+                    curl_runtime, Path(resolved_repo_path), work_path,
+                    no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run,
+                )
+            else:
+                docker_built = ensure_docker_image(image, no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run)
         else:
             print("skipped: build_docker=False")
 
@@ -272,7 +343,7 @@ def run_pipeline(
     with pipeline_stage("docker_run", event_callback):
         if run_docker:
             docker_ran = run_docker_cases(
-                image=image,
+                image=effective_image,
                 cases_dir=cases_dir,
                 results_dir=results_dir,
                 report_ids=report_id_list,
@@ -322,7 +393,7 @@ def run_pipeline(
         results_path=results_path,
         summary_path=results_dir / "summary.json",
         judgement_path=judgement_path,
-        image=image,
+        image=effective_image,
         llm_selected_count=llm_selected_count,
         llm_judgement_count=llm_judgement_count,
         docker_built=docker_built,

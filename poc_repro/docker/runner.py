@@ -42,6 +42,28 @@ def load_scope_gate(case_dir: Path) -> dict | None:
     return claim.get("curl_scope")
 
 
+def detect_curl_environment(requested: dict) -> dict:
+    environment = dict(requested)
+    probes = {
+        "actual_curl_version": ["curl", "--version"],
+        "actual_libcurl_version": ["curl-config", "--version"],
+    }
+    for field, command in probes.items():
+        try:
+            completed = subprocess.run(command, text=True, capture_output=True, timeout=5, check=False)
+            match = re.search(r"\b(\d+\.\d+\.\d+)\b", completed.stdout)
+            environment[field] = match.group(1) if completed.returncode == 0 and match else None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            environment[field] = None
+
+    requested_version = environment.get("requested_curl_version")
+    if requested_version:
+        exact = all(environment.get(field) == requested_version for field in ("actual_curl_version", "actual_libcurl_version"))
+        environment["match_status"] = "EXACT" if exact else "VERSION_MISMATCH"
+        environment["allow_execution"] = bool(environment.get("allow_execution")) and exact
+    return environment
+
+
 def run_command(command: list[str] | str, cwd: Path, timeout: int, shell: bool = False) -> dict:
     started = time.time()
     try:
@@ -190,6 +212,20 @@ def run_case(case_dir: Path, timeout: int, allow_shell: bool) -> dict:
         "skipped_reason": None,
         "verdict": None,
     }
+
+    environment_path = case_dir / "reproduction_environment.json"
+    requested_environment = load_json(environment_path) if environment_path.exists() else {
+        "match_status": "VERSION_UNSPECIFIED",
+        "allow_execution": True,
+    }
+    result["reproduction_environment"] = detect_curl_environment(requested_environment)
+    if not result["reproduction_environment"].get("allow_execution", False):
+        result["skipped_reason"] = (
+            "ENVIRONMENT_UNAVAILABLE: "
+            + result["reproduction_environment"].get("match_status", "UNKNOWN")
+        )
+        result["verdict"] = "NEEDS_MANUAL_REVIEW"
+        return result
 
     scope_gate = load_scope_gate(case_dir)
     if scope_gate is not None:
