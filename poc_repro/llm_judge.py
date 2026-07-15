@@ -144,19 +144,23 @@ def judge_results(
 
             print(f"[{index}/{len(results)}] judging claim match for #{report_id}", flush=True)
             claim = json.loads(claim_path.read_text(encoding="utf-8"))
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": build_judge_prompt(claim, result)},
-                ],
-            )
-            raw_response = response.choices[0].message.content or "{}"
             try:
+                response = client.chat.completions.create(
+                    model=model,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": build_judge_prompt(claim, result)},
+                    ],
+                )
+                raw_response = response.choices[0].message.content or "{}"
                 judgement = safe_json_loads(raw_response)
             except json.JSONDecodeError as exc:
                 write_invalid_judgement(out, report_id, raw_response, exc)
+                count += 1
+                continue
+            except Exception as exc:
+                write_invalid_judgement(out, report_id, "", exc)
                 count += 1
                 continue
 
