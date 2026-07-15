@@ -10,7 +10,35 @@ from typing import Any
 
 
 VERSION_PATTERN = re.compile(r"(?<![0-9.])(\d+\.\d+\.\d+)(?![0-9.])")
-RANGE_MARKERS = ("before", "after", "prior", "through", "below", "above", "<", ">", "~")
+STABLE_CURL_TAG_PATTERN = re.compile(r"^curl-(\d+)_(\d+)_(\d+)$")
+RANGE_MARKERS = (
+    "before",
+    "after",
+    "prior",
+    "through",
+    "below",
+    "above",
+    "older",
+    "earlier",
+    "including",
+    "up to",
+    "at least",
+    "or later",
+    "and later",
+    "or higher",
+    "and higher",
+    "current",
+    "master",
+    "head",
+    "-dev",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "≤",
+    "≥",
+    "~",
+)
 
 
 @dataclass
@@ -68,18 +96,59 @@ def git_tag_exists(repo_path: Path, tag: str) -> bool:
     return completed.returncode == 0
 
 
+def latest_stable_curl_tag(repo_path: Path) -> tuple[str, str] | None:
+    completed = subprocess.run(
+        ["git", "-c", f"safe.directory={repo_path}", "-C", str(repo_path), "tag", "--list", "curl-*"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+
+    versions: list[tuple[tuple[int, int, int], str, str]] = []
+    for tag in completed.stdout.splitlines():
+        match = STABLE_CURL_TAG_PATTERN.match(tag.strip())
+        if not match:
+            continue
+        version_tuple = tuple(int(part) for part in match.groups())
+        version = ".".join(match.groups())
+        versions.append((version_tuple, version, tag.strip()))
+    if not versions:
+        return None
+    _, version, tag = max(versions, key=lambda item: item[0])
+    return version, tag
+
+
 def resolve_curl_runtime(affected_version: Any, repo_path: str | Path | None, image_prefix: str) -> CurlRuntime:
     raw = None if affected_version is None else str(affected_version)
     version, status = resolve_requested_version(affected_version)
-    if version is None:
-        return CurlRuntime(raw, None, None, None, None, status, status == "VERSION_UNSPECIFIED")
-
-    tag = curl_tag(version)
     if repo_path is None:
+        tag = curl_tag(version) if version else None
         return CurlRuntime(raw, version, version, tag, None, "REPOSITORY_UNAVAILABLE", False)
     repo = Path(repo_path)
     if not (repo / ".git").exists():
+        tag = curl_tag(version) if version else None
         return CurlRuntime(raw, version, version, tag, None, "REPOSITORY_UNAVAILABLE", False)
+    if version is None:
+        if status != "VERSION_UNSPECIFIED":
+            return CurlRuntime(raw, None, None, None, None, status, False)
+        latest = latest_stable_curl_tag(repo)
+        if latest is None:
+            return CurlRuntime(raw, None, None, None, None, "VERSION_NOT_FOUND", False)
+        latest_version, latest_tag = latest
+        return CurlRuntime(
+            raw,
+            latest_version,
+            latest_version,
+            latest_tag,
+            versioned_image_name(image_prefix, latest_version),
+            "ASSUMED_LATEST",
+            True,
+            detail="affected_version was unspecified; using latest stable curl tag from local repository",
+        )
+
+    tag = curl_tag(version)
     if not git_tag_exists(repo, tag):
         return CurlRuntime(raw, version, version, tag, None, "VERSION_NOT_FOUND", False)
     return CurlRuntime(raw, version, version, tag, versioned_image_name(image_prefix, version), "EXACT", True)

@@ -59,7 +59,14 @@ def detect_curl_environment(requested: dict) -> dict:
     requested_version = environment.get("requested_curl_version")
     if requested_version:
         exact = all(environment.get(field) == requested_version for field in ("actual_curl_version", "actual_libcurl_version"))
-        environment["match_status"] = "EXACT" if exact else "VERSION_MISMATCH"
+        if exact:
+            environment["match_status"] = (
+                "ASSUMED_LATEST"
+                if environment.get("match_status") == "ASSUMED_LATEST"
+                else "EXACT"
+            )
+        else:
+            environment["match_status"] = "VERSION_MISMATCH"
         environment["allow_execution"] = bool(environment.get("allow_execution")) and exact
     return environment
 

@@ -149,8 +149,12 @@ def classify_candidate(record: dict) -> dict:
         candidate.update(
             {
                 "kind": "c",
-                "runnable": True,
-                "reason": "C-like PoC candidate",
+                "runnable": bool(candidate["curl_scope"].get("should_run_in_docker")),
+                "reason": (
+                    "C-like PoC candidate"
+                    if candidate["curl_scope"].get("should_run_in_docker")
+                    else f"C-like PoC candidate blocked by scope gate: {candidate['curl_scope'].get('scope')}"
+                ),
                 "normalized_code": normalized,
                 "normalization_notes": notes,
             }

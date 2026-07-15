@@ -328,7 +328,7 @@ def run_pipeline(
     docker_built = False
     with pipeline_stage("docker_build", event_callback):
         if build_docker:
-            if curl_runtime.match_status == "EXACT":
+            if curl_runtime.allow_execution and curl_runtime.image and curl_runtime.resolved_git_tag:
                 docker_built = ensure_versioned_image(
                     curl_runtime, Path(resolved_repo_path), work_path,
                     no_cache=no_cache, rebuild=rebuild_image, dry_run=dry_run,

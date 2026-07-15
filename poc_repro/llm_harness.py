@@ -57,6 +57,7 @@ def resolve_api_key(api_key: str | None = None, key_file: str | Path | None = No
 
 
 def create_llm_client(api_key: str | None, key_file: str | Path | None, base_url: str):
+    """Create the shared PoC LLM client with a bounded request duration."""
     from openai import OpenAI
 
     timeout = float(os.getenv("POC_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
@@ -202,16 +203,16 @@ def generate_harnesses(
     for index, record in enumerate(records, start=1):
         report_id = record["source_record"]["report_id"]
         print(f"[{index}/{len(records)}] generating harness for #{report_id}", flush=True)
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(record)},
-            ],
-        )
-        raw_response = response.choices[0].message.content or "{}"
         try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": build_user_prompt(record)},
+                ],
+            )
+            raw_response = response.choices[0].message.content or "{}"
             generation = safe_json_loads(raw_response)
         except json.JSONDecodeError as exc:
             write_invalid_generation(
@@ -222,6 +223,16 @@ def generate_harnesses(
                 exc,
             )
             print(f"  invalid JSON saved for manual review: {exc}", flush=True)
+            continue
+        except Exception as exc:
+            write_invalid_generation(
+                case_dir_for(cases_dir, report_id),
+                report_id,
+                record["source_record"].get("title"),
+                "",
+                exc,
+            )
+            print(f"  LLM harness failed; saved manual review stub: {type(exc).__name__}: {exc}", flush=True)
             continue
         generation["report_id"] = report_id
         generation["source_title"] = record["source_record"].get("title")
